@@ -20,6 +20,10 @@
   .row button { flex:1; }
   #status { margin-top:10px; padding-top:8px; border-top:1px solid #2a3340; color:#8a96a6; font-size:11px; }
   #gen { color:#cdd6e0; }
+  #stabBadge.dead    { background:#4a2020; color:#e08a8a; }
+  #stabBadge.full    { background:#203a4a; color:#8ac6e0; }
+  #stabBadge.stable  { background:#204a2a; color:#8ae0a0; }
+  #stabBadge.chaotic { background:#4a3a20; color:#e0c48a; }
   #pb, #ps { font-family:ui-monospace,monospace; font-size:10px; color:#b8c2d0; }
   dialog#help { max-width:460px; background:#151a22; color:#b8c2d0; border:1px solid #36424f;
         border-radius:10px; padding:18px 20px; font:13px/1.5 system-ui,sans-serif; }
@@ -104,6 +108,10 @@
 
   <div id="status">
     Gen <span id="gen">0</span> · pop <span id="pop">0</span>
+    <div style="margin-top:6px; font-size:11px;">
+      <span id="stabBadge" style="padding:2px 6px; border-radius:4px; background:#2a3340;">warming up</span>
+      &nbsp;stdDev <span id="stabStd">—</span>
+    </div>
     <div style="margin-top:6px; font-size:10px;">
       <span style="color:#ffb000">● create</span>&nbsp;&nbsp;
       <span style="color:#4fd0e0">● survive</span>
@@ -176,6 +184,15 @@ const TOPOS = {
   cylinder: ['straight', 'none'],
 };
 let generation = 0;
+const liveStats = LifeStats.makeRingStats(LifeStats.THRESHOLDS.WINDOW);
+function updateLiveBadge() {
+  const badge = document.getElementById('stabBadge'), std = document.getElementById('stabStd');
+  if (!liveStats.full()) { badge.textContent = 'warming up'; badge.className = ''; std.textContent = '—'; return; }
+  const status = LifeStats.classify(liveStats.mean(), liveStats.stdDev(), LifeStats.THRESHOLDS);
+  badge.textContent = status;
+  badge.className = status;
+  std.textContent = liveStats.stdDev().toFixed(3);
+}
 
 const idx = (c, r) => r * COLS + c;
 
@@ -222,6 +239,7 @@ function stampGliderAt(c0, r0) {
 
 function freshStart() {
   generation = 0;
+  liveStats.reset();
   paint(); updateStatus();
 }
 
@@ -229,6 +247,8 @@ function updateStatus() {
   let pop = 0; for (const v of grid) pop += v;
   document.getElementById('gen').textContent = generation;
   document.getElementById('pop').textContent = pop;
+  liveStats.push(pop / (COLS * ROWS));
+  updateLiveBadge();
 }
 function drawChart() {
   const cv = document.getElementById('chart'); if (!cv) return;
