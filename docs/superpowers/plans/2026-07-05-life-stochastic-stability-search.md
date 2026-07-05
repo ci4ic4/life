@@ -207,7 +207,7 @@ Expected: all 7 tests pass (`# pass 7`, `# fail 0`)
 
 ```bash
 git add life-stats.js life-stats.test.js
-git commit -m "feat: add life-stats pure sim/stats module with tests"
+git commit -m "feat(life-stats): add pure sim/stats module with tests"
 ```
 
 ---
@@ -321,7 +321,7 @@ Expected: all 10 tests pass (`# pass 10`, `# fail 0`)
 
 ```bash
 git add life-stats.js life-stats.test.js
-git commit -m "feat: add stepGrid and runHeadlessTrial to life-stats"
+git commit -m "feat(life-stats): add stepGrid and runHeadlessTrial"
 ```
 
 ---
@@ -474,7 +474,7 @@ Expected, via DevTools console (F12):
 
 ```bash
 git add life-stochastic.html
-git commit -m "refactor: delegate life-stochastic sim math to shared life-stats module"
+git commit -m "refactor(life-stochastic): delegate sim math to shared life-stats module"
 ```
 
 ---
@@ -606,7 +606,7 @@ Expected:
 
 ```bash
 git add life-stochastic.html
-git commit -m "feat: live population-ratio stability badge"
+git commit -m "feat(life-stochastic): live population-ratio stability badge"
 ```
 
 ---
@@ -722,7 +722,7 @@ Expected:
 
 ```bash
 git add life-stochastic.html
-git commit -m "feat: headless batch search for stable stochastic-life configs"
+git commit -m "feat(life-stochastic): headless batch search for stable configs"
 ```
 
 ---
@@ -731,4 +731,4 @@ git commit -m "feat: headless batch search for stable stochastic-life configs"
 
 - **Spec coverage:** §1 (metric) → Task 1 (`classify`/`makeRingStats`) + Task 4 (wiring). §2 (live monitor) → Task 4. §3 (batch search) → Task 2 (`runHeadlessTrial`) + Task 5 (UI/orchestration). §4 (results UI) → Task 5. Constants table → Global Constants section + `THRESHOLDS`/`SEARCH_*` literals, values match exactly.
 - **Type consistency:** `bParm`/`sParm` shape `{sigma, ceil, floor}` used identically in existing code (Task 3), `runHeadlessTrial` opts (Task 2), and search trial construction (Task 5). `classify()` return strings (`dead`/`full`/`stable`/`chaotic`) used identically in Task 4 badge and Task 5 filter.
-- **No git repo currently exists at `C:\Users\xci\source`** (confirmed at session start) — the `git add`/`git commit` steps in this plan assume one exists by execution time. If not, either run `git init` first or skip the commit steps and note it — flag this to the user before Task 1's commit step.
+- Project lives in its own repo at `C:\Users\xci\source\life` (git initialized, root commit `597ea4d`). All file paths in this plan are relative to that directory. This repo's commit-validate hook requires the one-line form `<type>(<scope>): <summary>` (no scope-less `type: summary`, no multi-line body) — every commit step above uses that form.
