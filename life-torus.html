@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Life on a Torus</title>
+<style>
+  body { margin:0; background:#0a0c10; color:#cdd6e0; font:13px/1.4 system-ui,sans-serif; overflow:hidden; }
+  #ui { position:fixed; top:10px; left:10px; z-index:10; background:#151a22ee; padding:12px 14px;
+        border:1px solid #2a3340; border-radius:8px; width:230px; }
+  #ui summary { font-size:14px; font-weight:600; cursor:pointer; margin:0 0 8px; user-select:none; }
+  #ui details:not([open]) summary { margin:0; }   /* tight box when collapsed */
+  #ui label { display:block; margin:7px 0 2px; color:#8a96a6; font-size:11px; }
+  #ui button { background:#222c39; color:#cdd6e0; border:1px solid #36424f; border-radius:5px;
+        padding:5px 9px; cursor:pointer; font-size:12px; }
+  #ui button:hover { background:#2c3a49; }
+  #ui button.tool.active { background:#5a4a1a; border-color:#ffb000; color:#ffd479; }
+  #ui select, #ui input[type=text] { width:100%; background:#0e1218; color:#cdd6e0;
+        border:1px solid #36424f; border-radius:5px; padding:4px; box-sizing:border-box; }
+  #ui input[type=range] { width:100%; }
+  .row { display:flex; gap:6px; margin-top:6px; }
+  .row button { flex:1; }
+  #status { margin-top:10px; padding-top:8px; border-top:1px solid #2a3340; color:#8a96a6; font-size:11px; }
+  #status b { color:#7fd18c; }
+  #gen { color:#cdd6e0; }
+  dialog#help { max-width:440px; background:#151a22; color:#b8c2d0; border:1px solid #36424f;
+        border-radius:10px; padding:18px 20px; font:13px/1.5 system-ui,sans-serif; }
+  dialog#help::backdrop { background:#000a; }
+  dialog#help h2 { margin:0 0 6px; font-size:16px; color:#cdd6e0; }
+  dialog#help h3 { margin:14px 0 4px; font-size:11px; color:#ffd479; letter-spacing:.5px; text-transform:uppercase; }
+  dialog#help ul { margin:4px 0; padding-left:18px; }
+  dialog#help b { color:#cdd6e0; }
+</style>
+
+<div id="ui">
+  <details open>
+  <summary>Life on a Torus</summary>
+
+  <label>Rule (B&lt;born&gt;/S&lt;survive&gt;)</label>
+  <select id="preset">
+    <option value="B3/S23">Conway — B3/S23</option>
+    <option value="B23/S2">Yours — B23/S2</option>
+    <option value="B36/S23">HighLife — B36/S23</option>
+    <option value="B2/S">Seeds — B2/S</option>
+    <option value="B34/S34">3-4 Life — B34/S34</option>
+    <option value="custom">Custom…</option>
+  </select>
+  <input type="text" id="rule" value="B3/S23" style="margin-top:6px">
+
+  <label>Topology</label>
+  <select id="topo">
+    <option value="torus">Torus — wrap both</option>
+    <option value="klein">Klein bottle — flipped seam</option>
+    <option value="mobius">Möbius — 1 flipped seam, open ends</option>
+    <option value="cylinder">Cylinder — 1 wrap, open ends</option>
+  </select>
+
+  <label>Tool (click/drag on the surface)</label>
+  <div class="row">
+    <button class="tool active" data-tool="orbit">Orbit</button>
+    <button class="tool" data-tool="pen">Pen</button>
+    <button class="tool" data-tool="glider">Glider</button>
+  </div>
+
+  <div class="row">
+    <button id="play">▶ Play</button>
+    <button id="step">Step</button>
+  </div>
+  <div class="row">
+    <button id="rand">Random</button>
+    <button id="clear">Clear</button>
+  </div>
+
+  <label>Speed (<span id="spd">10</span> gen/s)</label>
+  <input type="range" id="speed" min="1" max="60" value="10">
+
+  <label>Density on Random (<span id="densv">0.30</span>)</label>
+  <input type="range" id="dens" min="0" max="100" value="30">
+
+  <label>Grid size (cols × rows, 20–300)</label>
+  <div class="row">
+    <input type="number" id="cols" value="80" min="20" max="300">
+    <input type="number" id="rows" value="40" min="20" max="300">
+  </div>
+  <button id="apply" style="margin-top:6px; width:100%">Apply size</button>
+
+  <button id="view2d" style="margin-top:8px; width:100%">▦ 2D view</button>
+  <button id="reset" style="margin-top:6px; width:100%">Reset view</button>
+  <button id="helpBtn" style="margin-top:6px; width:100%">Help / About</button>
+
+  <div id="status">
+    Gen <span id="gen">0</span> · pop <span id="pop">0</span><br>
+    <span id="state">—</span>
+  </div>
+  </details>
+</div>
+
+<dialog id="help">
+  <h2>Life on a Torus</h2>
+  <p>Conway's Game of Life on a wrap-around grid, drawn on a 3D torus. Each generation, cells
+  live or die by their 8 neighbours. The grid's edges are glued, so patterns leaving one side
+  return on the other — the simulation really runs on the chosen surface; the donut just shows it.</p>
+
+  <h3>Rule</h3>
+  <p><b>B</b>orn / <b>S</b>urvive notation — pick a preset or type your own.
+  <b>B3/S23</b> (Conway) = dead cell with 3 neighbours is born; live cell with 2 or 3 survives.</p>
+
+  <h3>Topology</h3>
+  <ul>
+    <li><b>Torus</b> — both edge pairs wrap.</li>
+    <li><b>Klein bottle</b> — one seam flips; patterns return mirrored.</li>
+    <li><b>Möbius / Cylinder</b> — one edge pair is open; cells die at that boundary.</li>
+  </ul>
+
+  <h3>Tools (act on the surface)</h3>
+  <ul>
+    <li><b>Orbit</b> — left-drag rotate, right-drag pan, wheel zoom.</li>
+    <li><b>Pen</b> — left-drag paints cells (first cell sets draw vs erase); right-drag still pans.</li>
+    <li><b>Glider</b> — left-click drops a glider where you click.</li>
+  </ul>
+
+  <h3>Run &amp; shape</h3>
+  <ul>
+    <li><b>Play / Step</b> — run continuously, or one generation.</li>
+    <li><b>Random / Clear</b> — seed by density, or empty the grid.</li>
+    <li><b>Speed, Density, Grid size</b> — sliders; <b>Apply size</b> rebuilds the grid.</li>
+    <li><b>2D / 3D view</b> — flat grid (seam behaviour visible) vs torus; <b>Reset view</b> re-centres.</li>
+  </ul>
+  <p>Status line shows generation, population, and flags <b>STABLE</b> or <b>LOOP</b> when the
+  pattern settles or cycles. Click the title bar to collapse this panel. Esc closes this help.</p>
+
+  <button id="helpClose" style="margin-top:14px">Close</button>
+</dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+// ---- grid / simulation ------------------------------------------------------
+let COLS = 80, ROWS = 40;              // N (around tube) x M (around ring); mutable via Apply
+let grid = new Uint8Array(COLS * ROWS);
+let birth = new Set([3]), survive = new Set([2,3]);
+
+// Topology = per-axis seam behavior. 'straight' wrap, 'flip' wrap+reverse other
+// coord (the non-orientable twist), 'none' = open boundary (off-edge cell is dead).
+let Cwrap = 'straight', Rwrap = 'straight';
+const TOPOS = {
+  torus:    ['straight', 'straight'],
+  klein:    ['flip',     'straight'],
+  mobius:   ['flip',     'none'],
+  cylinder: ['straight', 'none'],
+};
+let generation = 0;
+const seen = new Map();                // hash -> generation, for loop/stable detect
+let halted = false;
+
+const idx = (c, r) => r * COLS + c;
+
+function parseRule(str) {
+  // "B3/S23" -> sets. ponytail: tolerant of spaces/case, ignores junk chars.
+  const m = str.toUpperCase().match(/B([0-8]*)\s*\/\s*S([0-8]*)/);
+  if (!m) return false;
+  birth   = new Set(m[1].split('').map(Number));
+  survive = new Set(m[2].split('').map(Number));
+  return true;
+}
+
+// Map a (possibly off-grid by one) neighbor coord back onto the grid per topology.
+// Returns null if it falls off an open ('none') boundary -> counts as dead.
+function resolve(nc, nr) {
+  if (nc < 0 || nc >= COLS) {
+    if (Cwrap === 'none') return null;
+    if (Cwrap === 'flip') nr = ROWS - 1 - nr;   // crossing C seam flips R
+    nc = (nc + COLS) % COLS;
+  }
+  if (nr < 0 || nr >= ROWS) {
+    if (Rwrap === 'none') return null;
+    if (Rwrap === 'flip') nc = COLS - 1 - nc;    // crossing R seam flips C
+    nr = (nr + ROWS) % ROWS;
+  }
+  return idx(nc, nr);
+}
+
+function neighbors(c, r) {
+  let n = 0;
+  for (let dr = -1; dr <= 1; dr++)
+    for (let dc = -1; dc <= 1; dc++) {
+      if (!dr && !dc) continue;
+      const i = resolve(c + dc, r + dr);
+      if (i !== null) n += grid[i];
+    }
+  return n;
+}
+
+function step() {
+  const next = new Uint8Array(COLS * ROWS);
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++) {
+      const n = neighbors(c, r);
+      const alive = grid[idx(c, r)];
+      next[idx(c, r)] = (alive ? survive.has(n) : birth.has(n)) ? 1 : 0;
+    }
+  grid = next;
+  generation++;
+  detect();
+  paint();
+  updateStatus();
+}
+
+function detect() {
+  // ponytail: hash = raw bytes joined. fine to ~200x200; swap to a rolling hash if huge.
+  const h = grid.join('');
+  if (seen.has(h)) {
+    const period = generation - seen.get(h);
+    halted = true;
+    stop();
+    document.getElementById('state').innerHTML = period === 1
+      ? '<b>STABLE</b> (still life)'
+      : `<b>LOOP</b> period ${period}`;
+  } else {
+    seen.set(h, generation);
+    document.getElementById('state').textContent = 'running…';
+  }
+}
+
+function randomize() {
+  const d = +document.getElementById('dens').value / 100;
+  for (let i = 0; i < grid.length; i++) grid[i] = Math.random() < d ? 1 : 0;
+  freshStart();
+}
+function clearGrid() { grid.fill(0); freshStart(); }
+
+// Standard Conway glider (B3/S23). Travels diagonally; stamped near the right side
+// so it reaches the C seam in a few gens — switch to 2D to watch it wrap/flip.
+function stampGliderAt(c0, r0) {
+  const cells = [[1,0],[2,1],[0,2],[1,2],[2,2]];
+  for (const [dc, dr] of cells) grid[idx((c0+dc+COLS) % COLS, (r0+dr+ROWS) % ROWS)] = 1;
+  editPoke();                                   // mid-run edit -> reset detection, allow play
+  paint(); updateStatus();
+}
+
+function freshStart() {
+  generation = 0; halted = false; seen.clear();
+  document.getElementById('state').textContent = '—';
+  paint(); updateStatus();
+}
+
+function updateStatus() {
+  let pop = 0; for (const v of grid) pop += v;
+  document.getElementById('gen').textContent = generation;
+  document.getElementById('pop').textContent = pop;
+}
+
+// ---- WebGL: paint grid into a texture, wrap it on a torus --------------------
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0c10);
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 1000);
+camera.position.set(0, 4, 9);
+const DEFAULT_CAM = camera.position.clone();
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement); // zoom/pan/rotate free
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+dir.position.set(5, 8, 6); scene.add(dir);
+
+let texData = new Uint8Array(COLS * ROWS * 4);
+let tex = new THREE.DataTexture(texData, COLS, ROWS, THREE.RGBAFormat);
+tex.magFilter = tex.minFilter = THREE.NearestFilter;  // crisp cells, no blur
+
+function paint() {
+  for (let i = 0; i < grid.length; i++) {
+    const on = grid[i];
+    texData[i*4+0] = on ? 255 : 26;   // amber P3 phosphor (#ffb000) for the 3270 nod
+    texData[i*4+1] = on ? 176 : 18;
+    texData[i*4+2] = on ? 0   :  8;
+    texData[i*4+3] = 255;
+  }
+  tex.needsUpdate = true;
+}
+
+const torus = new THREE.Mesh(
+  new THREE.TorusGeometry(3, 1.3, ROWS, COLS),   // segments match grid so cells line up
+  new THREE.MeshStandardMaterial({ map: tex, roughness: 0.65, metalness: 0.1 })
+);
+torus.rotation.x = Math.PI / 2;
+scene.add(torus);
+
+// Flat view: same texture on a plane (unlit). Shows the fundamental domain so the
+// wrap/flip seam behavior is actually visible. Shares `tex` -> updates for free.
+const plane = new THREE.Mesh(
+  new THREE.PlaneGeometry(8, 8 * ROWS / COLS),
+  new THREE.MeshBasicMaterial({ map: tex })
+);
+plane.visible = false;
+scene.add(plane);
+
+// ---- timing loop ------------------------------------------------------------
+let playing = false, acc = 0, last = performance.now(), gps = 10;
+function animate(now) {
+  requestAnimationFrame(animate);
+  const dt = (now - last) / 1000; last = now;
+  if (playing && !halted) {
+    acc += dt;
+    const interval = 1 / gps;
+    while (acc >= interval) { step(); acc -= interval; if (halted) break; }
+  }
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+function stop()  { playing = false; document.getElementById('play').textContent = '▶ Play'; }
+function start() { if (halted) freshStart(); playing = true; document.getElementById('play').textContent = '⏸ Pause'; }
+
+// ---- UI wiring --------------------------------------------------------------
+const $ = id => document.getElementById(id);
+$('play').onclick  = () => playing ? stop() : start();
+$('step').onclick  = () => { if (halted) freshStart(); step(); };
+$('rand').onclick  = randomize;
+$('clear').onclick = clearGrid;
+$('helpBtn').onclick   = () => $('help').showModal();          // native modal: Esc + focus-trap free
+$('helpClose').onclick = () => $('help').close();
+$('help').addEventListener('click', e => { if (e.target === $('help')) $('help').close(); }); // backdrop
+
+// --- pointer tools: orbit (camera), pen (paint cells), glider (drop one) ------
+let tool = 'orbit';
+function setTool(t) {
+  tool = t;
+  controls.enabled = true;              // pan (right-drag) + zoom stay live in every mode
+  controls.mouseButtons.LEFT = (t === 'pen') ? -1 : THREE.MOUSE.ROTATE;  // pen: left paints
+  document.querySelectorAll('.tool').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
+}
+document.querySelectorAll('.tool').forEach(b => b.onclick = () => setTool(b.dataset.tool));
+
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+function cellAt(e) {                     // screen point -> grid cell via mesh UV, or null
+  const rect = renderer.domElement.getBoundingClientRect();
+  ndc.x =  ((e.clientX - rect.left) / rect.width)  * 2 - 1;
+  ndc.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
+  raycaster.setFromCamera(ndc, camera);
+  const hit = raycaster.intersectObject(is2D ? plane : torus)[0];
+  return (hit && hit.uv) ? [Math.floor(hit.uv.x * COLS) % COLS, Math.floor(hit.uv.y * ROWS) % ROWS] : null;
+}
+function editPoke() { halted = false; seen.clear(); document.getElementById('state').textContent = '—'; }
+
+let downXY = null, painting = false, paintVal;   // paintVal set on each stroke start
+const dom = renderer.domElement;
+dom.addEventListener('pointerdown', e => {
+  downXY = [e.clientX, e.clientY];
+  if (tool !== 'pen' || e.button !== 0) return;     // left paints; right/mid -> pan
+  const cell = cellAt(e); if (!cell) return;
+  editPoke();
+  paintVal = grid[idx(cell[0], cell[1])] ? 0 : 1;  // first cell decides draw vs erase
+  grid[idx(cell[0], cell[1])] = paintVal;
+  painting = true; paint(); updateStatus();
+});
+dom.addEventListener('pointermove', e => {
+  if (!painting) return;
+  const cell = cellAt(e); if (!cell) return;
+  grid[idx(cell[0], cell[1])] = paintVal;
+  paint(); updateStatus();
+});
+dom.addEventListener('pointerup', e => {
+  painting = false;
+  if (tool !== 'glider' || e.button !== 0 || !downXY) { downXY = null; return; }
+  const moved = Math.hypot(e.clientX - downXY[0], e.clientY - downXY[1]);
+  downXY = null;
+  if (moved > 4) return;                            // was an orbit drag, not a click
+  const cell = cellAt(e); if (cell) stampGliderAt(cell[0], cell[1]);
+});
+
+// --- resize the grid: rebuild buffers, texture, and both geometries ----------
+function rebuild(c, r) {
+  COLS = c; ROWS = r;
+  grid = new Uint8Array(COLS * ROWS);
+  texData = new Uint8Array(COLS * ROWS * 4);
+  tex.dispose();
+  tex = new THREE.DataTexture(texData, COLS, ROWS, THREE.RGBAFormat);
+  tex.magFilter = tex.minFilter = THREE.NearestFilter;
+  torus.geometry.dispose();
+  torus.geometry = new THREE.TorusGeometry(3, 1.3, ROWS, COLS);
+  torus.material.map = tex; torus.material.needsUpdate = true;
+  plane.geometry.dispose();
+  plane.geometry = new THREE.PlaneGeometry(8, 8 * ROWS / COLS);
+  plane.material.map = tex; plane.material.needsUpdate = true;
+  freshStart();
+}
+$('apply').onclick = () => {
+  const c = Math.max(20, Math.min(300, +$('cols').value | 0));
+  const r = Math.max(20, Math.min(300, +$('rows').value | 0));
+  $('cols').value = c; $('rows').value = r;
+  rebuild(c, r);
+  randomize();                                       // give the new grid something to show
+};
+let is2D = false;
+function setView(twoD) {
+  is2D = twoD;
+  torus.visible = !twoD; plane.visible = twoD;
+  controls.enableRotate = !twoD;                 // flat view: pan+zoom only
+  camera.position.copy(twoD ? new THREE.Vector3(0,0,6) : DEFAULT_CAM);
+  controls.target.set(0,0,0); controls.update();
+  $('view2d').textContent = twoD ? '◉ 3D view' : '▦ 2D view';
+}
+$('view2d').onclick = () => setView(!is2D);
+$('reset').onclick  = () => setView(is2D);       // re-center current view
+
+$('speed').oninput = e => { gps = +e.target.value; $('spd').textContent = gps; };
+$('dens').oninput  = e => $('densv').textContent = (+e.target.value/100).toFixed(2);
+
+$('preset').onchange = e => {
+  if (e.target.value !== 'custom') { $('rule').value = e.target.value; applyRule(); }
+};
+$('topo').onchange = e => {
+  [Cwrap, Rwrap] = TOPOS[e.target.value];
+  editPoke();                           // neighbor structure changed -> history void
+};
+
+$('rule').oninput = applyRule;
+function applyRule() {
+  if (parseRule($('rule').value)) {
+    $('rule').style.borderColor = '#36424f';
+    editPoke();                         // rule changed -> old history meaningless
+  } else $('rule').style.borderColor = '#c4564f';
+}
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ---- self-check: known Conway still life + blinker on the torus -------------
+function selfTest() {
+  const save = { g: grid, b: birth, s: survive, cw: Cwrap, rw: Rwrap };
+  birth = new Set([3]); survive = new Set([2,3]);
+  [Cwrap, Rwrap] = TOPOS.torus;
+  grid = new Uint8Array(COLS*ROWS);       // blinker: 3 in a row -> period 2
+  grid[idx(10,10)] = grid[idx(11,10)] = grid[idx(12,10)] = 1;
+  const before = grid.join('');
+  for (let s = 0; s < 2; s++) {           // 2 gens -> back to start; reuse the real neighbors()
+    const nx = new Uint8Array(COLS*ROWS);
+    for (let r=0;r<ROWS;r++) for (let c=0;c<COLS;c++) {
+      const n = neighbors(c, r);
+      nx[idx(c,r)] = (grid[idx(c,r)] ? survive.has(n) : birth.has(n)) ? 1 : 0;
+    }
+    grid = nx;
+  }
+  console.assert(grid.join('') === before, 'Conway blinker should be period-2');
+  grid = save.g; birth = save.b; survive = save.s; Cwrap = save.cw; Rwrap = save.rw;
+}
+
+// ---- boot -------------------------------------------------------------------
+selfTest();
+parseRule('B3/S23');
+randomize();
+requestAnimationFrame(animate);
+</script>
