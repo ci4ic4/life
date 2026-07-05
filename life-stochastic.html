@@ -18,6 +18,8 @@
   #ui .grp { font-size:11px; font-weight:600; margin-top:10px; padding-top:6px; border-top:1px solid #2a3340; }
   .row { display:flex; gap:6px; margin-top:6px; }
   .row button { flex:1; }
+  .searchRow { display:block; width:100%; text-align:left; margin-top:4px; font-size:10px;
+        font-family:ui-monospace,monospace; padding:4px 6px; }
   #status { margin-top:10px; padding-top:8px; border-top:1px solid #2a3340; color:#8a96a6; font-size:11px; }
   #gen { color:#cdd6e0; }
   #stabBadge { background:#2a3340; }
@@ -102,6 +104,9 @@
     <input type="number" id="rows" value="40" min="20" max="300">
   </div>
   <button id="apply" style="margin-top:6px; width:100%">Apply size</button>
+
+  <button id="search" style="margin-top:8px; width:100%">🔍 Search stable configs</button>
+  <div id="searchResults" style="display:none; margin-top:6px; max-height:220px; overflow-y:auto;"></div>
 
   <button id="view2d" style="margin-top:8px; width:100%">▦ 2D view</button>
   <button id="reset" style="margin-top:6px; width:100%">Reset view</button>
@@ -434,6 +439,50 @@ function setView(twoD) {
   controls.target.set(0,0,0); controls.update();
   $('view2d').textContent = twoD ? '◉ 3D view' : '▦ 2D view';
 }
+const SEARCH_TRIALS = 30, SEARCH_COLS = 60, SEARCH_ROWS = 30, SEARCH_GENS = 300;
+function randSlider(min, max) { return min + Math.random() * (max - min); } // matches slider ranges below
+function runSearch() {
+  const results = [];
+  for (let i = 0; i < SEARCH_TRIALS; i++) {
+    const trialBParm = { sigma: randSlider(0.05, 2.00), ceil: randSlider(0, 1), floor: randSlider(0, 1) };
+    const trialSParm = { sigma: randSlider(0.05, 2.00), ceil: randSlider(0, 1), floor: randSlider(0, 1) };
+    const density = +$('dens').value / 100;
+    const r = LifeStats.runHeadlessTrial({
+      cols: SEARCH_COLS, rows: SEARCH_ROWS, cwrap: Cwrap, rwrap: Rwrap,
+      gens: SEARCH_GENS, windowSize: LifeStats.THRESHOLDS.WINDOW, thresholds: LifeStats.THRESHOLDS,
+      birth, survive, bParm: trialBParm, sParm: trialSParm, density, rng: Math.random,
+    });
+    if (r.status === 'stable') results.push({ ...r, bParm: trialBParm, sParm: trialSParm });
+  }
+  results.sort((a, b) => a.stdDev - b.stdDev);
+  renderSearchResults(results);
+}
+function renderSearchResults(results) {
+  const panel = $('searchResults');
+  panel.style.display = 'block';
+  if (!results.length) { panel.textContent = 'No stable configs found in 30 trials — try again.'; return; }
+  panel.innerHTML = '';
+  results.forEach(res => {
+    const btn = document.createElement('button');
+    btn.className = 'searchRow';
+    btn.textContent = `σ ${res.bParm.sigma.toFixed(2)}/${res.sParm.sigma.toFixed(2)} · ` +
+      `ratio ${res.finalRatio.toFixed(2)} · stdDev ${res.stdDev.toFixed(3)}`;
+    btn.onclick = () => {
+      Object.assign(bParm, res.bParm);
+      Object.assign(sParm, res.sParm);
+      $('sigC').value = res.bParm.sigma * 100; $('sigCv').textContent = res.bParm.sigma.toFixed(2);
+      $('ceilC').value = res.bParm.ceil * 100; $('ceilCv').textContent = res.bParm.ceil.toFixed(2);
+      $('floorC').value = res.bParm.floor * 100; $('floorCv').textContent = res.bParm.floor.toFixed(2);
+      $('sigS').value = res.sParm.sigma * 100; $('sigSv').textContent = res.sParm.sigma.toFixed(2);
+      $('ceilS').value = res.sParm.ceil * 100; $('ceilSv').textContent = res.sParm.ceil.toFixed(2);
+      $('floorS').value = res.sParm.floor * 100; $('floorSv').textContent = res.sParm.floor.toFixed(2);
+      buildTables();
+      panel.style.display = 'none';
+    };
+    panel.appendChild(btn);
+  });
+}
+$('search').onclick = runSearch;
 $('view2d').onclick = () => setView(!is2D);
 $('reset').onclick  = () => setView(is2D);       // re-center current view
 
