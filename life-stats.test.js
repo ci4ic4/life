@@ -60,3 +60,38 @@ test('classify labels dead/full/stable/chaotic by thresholds', () => {
   assert.equal(LifeStats.classify(0.4, 0.01, t), 'stable');
   assert.equal(LifeStats.classify(0.4, 0.2, t), 'chaotic');
 });
+
+test('stepGrid: an isolated live cell with 0 neighbors dies under default B3/S23-shaped tables', () => {
+  const cols = 5, rows = 5;
+  const grid = new Uint8Array(cols * rows);
+  grid[12] = 1; // center, no neighbors
+  const pBirth = new Float64Array(9), pSurvive = new Float64Array(9);
+  LifeStats.curve(new Set([3]), { sigma: 0.6, ceil: 1, floor: 0 }, pBirth);
+  LifeStats.curve(new Set([2, 3]), { sigma: 0.6, ceil: 1, floor: 0 }, pSurvive);
+  const next = LifeStats.stepGrid(grid, cols, rows, 'straight', 'straight', pBirth, pSurvive, () => 0.5);
+  assert.equal(next[12], 0, 'survive prob at n=0 is ~0, rng()=0.5 should not pass');
+});
+
+test('runHeadlessTrial: rng that always fails every threshold keeps an empty grid dead', () => {
+  const result = LifeStats.runHeadlessTrial({
+    cols: 10, rows: 10, cwrap: 'straight', rwrap: 'straight',
+    gens: 60, windowSize: LifeStats.THRESHOLDS.WINDOW, thresholds: LifeStats.THRESHOLDS,
+    birth: new Set([3]), survive: new Set([2, 3]),
+    bParm: { sigma: 0.6, ceil: 1, floor: 0 }, sParm: { sigma: 0.6, ceil: 1, floor: 0 },
+    density: 0.3, rng: () => 0.99,
+  });
+  assert.equal(result.status, 'dead');
+  assert.equal(result.mean, 0);
+});
+
+test('runHeadlessTrial: rng that always passes fills and stays full', () => {
+  const result = LifeStats.runHeadlessTrial({
+    cols: 10, rows: 10, cwrap: 'straight', rwrap: 'straight',
+    gens: 60, windowSize: LifeStats.THRESHOLDS.WINDOW, thresholds: LifeStats.THRESHOLDS,
+    birth: new Set([3]), survive: new Set([2, 3]),
+    bParm: { sigma: 0.6, ceil: 1, floor: 0 }, sParm: { sigma: 0.6, ceil: 1, floor: 0 },
+    density: 0.3, rng: () => 0,
+  });
+  assert.equal(result.status, 'full');
+  assert.equal(result.mean, 1);
+});

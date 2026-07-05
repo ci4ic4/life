@@ -80,5 +80,37 @@
     return 'chaotic';
   }
 
-  return { bumpMax, curve, resolveCell, countNeighbors, makeRingStats, classify, THRESHOLDS };
+  function stepGrid(grid, cols, rows, cwrap, rwrap, pBirth, pSurvive, rng) {
+    const next = new Uint8Array(cols * rows);
+    for (let r = 0; r < rows; r++)
+      for (let c = 0; c < cols; c++) {
+        const n = countNeighbors(c, r, cols, rows, cwrap, rwrap, grid);
+        const idx = r * cols + c;
+        const p = grid[idx] ? pSurvive[n] : pBirth[n];
+        next[idx] = rng() < p ? 1 : 0;
+      }
+    return next;
+  }
+
+  function runHeadlessTrial(opts) {
+    const { cols, rows, cwrap, rwrap, gens, windowSize, thresholds, birth, survive, bParm, sParm, density, rng } = opts;
+    let grid = new Uint8Array(cols * rows);
+    for (let i = 0; i < grid.length; i++) grid[i] = rng() < density ? 1 : 0;
+    const pBirth = new Float64Array(9), pSurvive = new Float64Array(9);
+    curve(birth, bParm, pBirth);
+    curve(survive, sParm, pSurvive);
+    const stats = makeRingStats(windowSize);
+    for (let g = 0; g < gens; g++) {
+      grid = stepGrid(grid, cols, rows, cwrap, rwrap, pBirth, pSurvive, rng);
+      let pop = 0; for (const v of grid) pop += v;
+      stats.push(pop / (cols * rows));
+    }
+    const mean = stats.mean(), stdDev = stats.stdDev();
+    return { mean, stdDev, status: classify(mean, stdDev, thresholds), finalRatio: mean };
+  }
+
+  return {
+    bumpMax, curve, resolveCell, countNeighbors, stepGrid,
+    makeRingStats, classify, runHeadlessTrial, THRESHOLDS,
+  };
 });
