@@ -119,7 +119,8 @@
   warm colours (Amber, Rose, Magenta) vs cool (Cyan, Lime, Violet). A neighbour of the
   same clan counts <b>+1</b> (types cooperate), the other clan counts <b>−1</b> — for both
   birth and survival, so a foe-swamped cell dies and a contested spot stays barren.
-  A newborn takes the majority parent type of the clan that won the cell.
+  A newborn takes the majority parent type of the clan that won the cell; a tied
+  majority births nothing (no favourite type).
   One type reduces to classic Life; shrinking the count folds existing cells back into
   the remaining types without changing clan. With several types, the coloured buttons
   choose what Pen and Glider place, <b>Random</b> seeds all active types evenly, and the
@@ -249,11 +250,14 @@ function computeNext() {
         const b0 = birth.has(s0)  && c0 > 0;   // needs a parent of that class
         const b1 = birth.has(-s0) && c1 > 0;
         if (b0 !== b1) {
-          const k = b0 ? 0 : 1;                // newborn = majority type of the
-          let best = 0, bestN = 0;             // winning class (ties: lowest index)
-          for (let t = 1; t <= NTYPES; t++)
-            if (TYPES[t-1].cls === k && counts[t] > bestN) { best = t; bestN = counts[t]; }
-          next[idx(c, r)] = best;
+          const k = b0 ? 0 : 1;                // newborn = majority type of the winning
+          let best = 0, bestN = 0, tie = false;// class; tied majority -> no birth (a
+          for (let t = 1; t <= NTYPES; t++) {  // lowest-index tie-break ratchets every
+            if (TYPES[t-1].cls !== k) continue;// type toward Amber/Cyan over time)
+            if (counts[t] > bestN) { best = t; bestN = counts[t]; tie = false; }
+            else if (counts[t] === bestN && bestN > 0) tie = true;
+          }
+          next[idx(c, r)] = tie ? 0 : best;
         }
       }
     }
@@ -552,6 +556,13 @@ function selfTest() {
   grid[idx(11,12)] = 3;
   grid = computeNext();
   console.assert(grid[idx(11,11)] === 1, 'same-clan types should cooperate on birth');
+
+  grid = new Uint8Array(COLS*ROWS);       // tied majority: 2 amber + 2 rose + 1 foe
+  grid[idx(10,10)] = grid[idx(10,11)] = 1;// -> signed 3 (B3) but 2/2 tie -> no birth
+  grid[idx(12,11)] = grid[idx(12,12)] = 3;
+  grid[idx(10,12)] = 2;
+  grid = computeNext();
+  console.assert(grid[idx(11,11)] === 0, 'tied intra-clan majority should not give birth');
 
   grid = save.g; birth = save.b; survive = save.s; Cwrap = save.cw; Rwrap = save.rw; NTYPES = save.n;
 }
