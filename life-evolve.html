@@ -40,9 +40,17 @@
     <option value="B3/S23">Conway — B3/S23</option>
     <option value="B36/S23">HighLife — B36/S23</option>
     <option value="B34/S34">3-4 Life — B34/S34</option>
+    <option value="w5x5:B6-14/S4-8">Weighted — Coral (dense borders)</option>
+    <option value="w5x5:B10-18/S12-16">Weighted — Blobs</option>
     <option value="custom">Custom…</option>
   </select>
   <input type="text" id="rule" value="B3/S23" style="margin-top:6px">
+
+  <label>Neighborhood</label>
+  <select id="neigh">
+    <option value="moore">Moore — 8 cells, ±1</option>
+    <option value="w5x5">Weighted 5×5 — 24 cells, max 40</option>
+  </select>
 
   <div class="grp">Evolution</div>
   <label>Mutation σ (<span id="mutv">0.05</span>) — 0 = frozen genes</label>
@@ -128,11 +136,22 @@
   cells survive to breed — so border colonies drift toward higher tolerance on their own. That is
   natural selection: variation (mutation) filtered by differential survival.</p>
 
+  <h3>Neighborhood</h3>
+  <p><b>Moore</b> is the classic 8 cells. <b>Weighted 5×5</b> counts 24 cells with
+  distance-decaying weights (rules become ranges <b>Bx-y/Sp-q</b>). The bigger kernel keeps
+  clans pressed against each other in dense fronts — so tolerance has somewhere to evolve.
+  Foe weight there is large, making the selection pressure (and the brightening borders)
+  much stronger than under Moore.</p>
+
   <h3>Seeing it</h3>
-  <p>Cell brightness = τ: dim cells are vulnerable (low τ), bright cells tolerant (high τ). Watch a
-  border brighten as it adapts. The <b>Colour</b> button switches to a τ heatmap (indigo→green→yellow)
-  that ignores clan. The graph plots mean τ per clan over time — the lines rising from the 0.5 seed
-  is the proof selection is at work.</p>
+  <p>Cell brightness = τ: dim cells are vulnerable (low τ), bright cells tolerant (high τ). The
+  <b>Colour</b> button switches to a τ heatmap (indigo→green→yellow) that ignores clan.</p>
+  <p>Under the simple <b>Moore</b> rule, selection pushes the whole population up and the graph's
+  mean-τ lines climb from the 0.5 seed. Under a <b>weighted</b> band-pass rule the story is subtler
+  and more lifelike: contested <b>borders</b> evolve high tolerance (they'd starve without it) while
+  crowded <b>interiors</b> stay low (there, tolerance tips a cell into overcrowding) — so the global
+  mean can sit near 0.5 while the τ heatmap shows bright adapted fronts over dim cores. Adaptation is
+  local. Turn mutation to 0 as a control: the genes freeze and nothing adapts.</p>
 
   <h3>Controls</h3>
   <ul>
@@ -152,7 +171,24 @@
 let COLS = 80, ROWS = 40;              // N (around tube) x M (around ring); mutable via Apply
 let grid = new Uint8Array(COLS * ROWS);   // 0 = dead, 1 = warm clan, 2 = cool clan
 let tau  = new Float32Array(COLS * ROWS); // tolerance gene per live cell, in [0,1]
-let birth = new Set([3]), survive = new Set([2,3]);
+let birth = new Set([3]), survive = new Set([2,3]);          // Moore digit-set mode
+let bLo = 3, bHi = 3, sLo = 2, sHi = 3, rangedMode = false;  // weighted-range mode
+
+// Neighborhood kernels, shared with life-torus: [dc,dr,weight] contributing cells.
+// The weighted 5x5 sums to 40; its rules are ranges Bx-y/Sp-q. A bigger kernel
+// sustains dense contested borders, which is where tolerance actually evolves.
+function kernelCells(mat) {
+  const cells = [], h = mat.length >> 1;
+  mat.forEach((row, r) => row.forEach((w, c) => { if (w) cells.push([c - h, r - h, w]); }));
+  return cells;
+}
+const KERNELS = {
+  moore: { max: 8, rule: 'B3/S23', cells: kernelCells([[1,1,1],[1,0,1],[1,1,1]]) },
+  w5x5:  { max: 40, rule: 'B14-18/S12-24', cells: kernelCells([
+    [1,1,2,1,1], [1,2,3,2,1], [2,3,0,3,2], [1,2,3,2,1], [1,1,2,1,1],
+  ]) },
+};
+let kernel = KERNELS.moore;
 
 const CLAN = c => c - 1;               // grid value 1/2 -> clan 0 (warm) / 1 (cool)
 let seedTau = 0.5, randTau = false, mutSigma = 0.05;
@@ -180,6 +216,15 @@ function gauss(sigma) {
 const clamp01 = x => x < 0 ? 0 : x > 1 ? 1 : x;
 
 function parseRule(str) {
+  rangedMode = kernel.max > 8;
+  if (rangedMode) {
+    // "B14-18/S12-24" (single value = degenerate range). Bounds 1..kernel.max.
+    const m = str.toUpperCase().match(/B(\d+)(?:-(\d+))?\s*\/\s*S(\d+)(?:-(\d+))?/);
+    if (!m) return false;
+    bLo = +m[1]; bHi = +(m[2] ?? m[1]); sLo = +m[3]; sHi = +(m[4] ?? m[3]);
+    return bLo >= 1 && bLo <= bHi && bHi <= kernel.max &&
+           sLo >= 1 && sLo <= sHi && sHi <= kernel.max;
+  }
   // "B3/S23" -> sets. ponytail: tolerant of spaces/case, ignores junk chars.
   const m = str.toUpperCase().match(/B([0-8]*)\s*\/\s*S([0-8]*)/);
   if (!m) return false;
@@ -187,6 +232,10 @@ function parseRule(str) {
   survive = new Set(m[2].split('').map(Number));
   return true;
 }
+// Birth support is an integer weighted difference; survival support s is
+// fractional (τ shields), so the digit-set test rounds it.
+const birthOK   = n => rangedMode ? (n >= bLo && n <= bHi) : birth.has(n);
+const surviveOK = s => rangedMode ? (s >= sLo && s <= sHi) : survive.has(Math.round(s));
 
 // Map a (possibly off-grid by one) neighbor coord back onto the grid per topology.
 function resolve(nc, nr) {
@@ -210,27 +259,26 @@ function resolve(nc, nr) {
 function computeNext(nextGrid, nextTau) {
   for (let r = 0; r < ROWS; r++)
     for (let c = 0; c < COLS; c++) {
-      let a0 = 0, a1 = 0, tSum0 = 0, tSum1 = 0;   // per-clan counts + τ sums (parents)
-      for (let dr = -1; dr <= 1; dr++)
-        for (let dc = -1; dc <= 1; dc++) {
-          if (!dr && !dc) continue;
-          const i = resolve(c + dc, r + dr);
-          if (i === null || !grid[i]) continue;
-          if (CLAN(grid[i]) === 0) { a0++; tSum0 += tau[i]; } else { a1++; tSum1 += tau[i]; }
-        }
+      // weighted per-clan support + weighted τ sums (closer parents contribute
+      // more weight, so they pass proportionally more of their gene)
+      let a0 = 0, a1 = 0, tSum0 = 0, tSum1 = 0;
+      for (const [dc, dr, w] of kernel.cells) {
+        const i = resolve(c + dc, r + dr);
+        if (i === null || !grid[i]) continue;
+        if (CLAN(grid[i]) === 0) { a0 += w; tSum0 += w * tau[i]; } else { a1 += w; tSum1 += w * tau[i]; }
+      }
       const here = idx(c, r), alive = grid[here];
       if (alive) {
         const k = CLAN(alive);
         const allies = k === 0 ? a0 : a1, foes = k === 0 ? a1 : a0;
         const s = allies - (1 - tau[here]) * foes;    // τ shields from foes
-        // deterministic rule membership: round to nearest int neighbour-equivalent
-        if (survive.has(Math.round(s))) { nextGrid[here] = alive; nextTau[here] = tau[here]; }
+        if (surviveOK(s)) { nextGrid[here] = alive; nextTau[here] = tau[here]; }
         else { nextGrid[here] = 0; nextTau[here] = 0; }
       } else {
         // birth: rivals count full. Both clans may qualify only at a signed 0
         // (rules with B0) -> contested, stays dead.
-        const b0 = birth.has(a0 - a1) && a0 > 0;
-        const b1 = birth.has(a1 - a0) && a1 > 0;
+        const b0 = birthOK(a0 - a1) && a0 > 0;
+        const b1 = birthOK(a1 - a0) && a1 > 0;
         if (b0 !== b1) {
           const k = b0 ? 0 : 1;
           nextGrid[here] = k + 1;
@@ -519,11 +567,23 @@ $('mut').oninput   = e => { mutSigma = +e.target.value / 100; $('mutv').textCont
 $('seed').oninput  = e => { seedTau = +e.target.value / 100; $('seedv').textContent = seedTau.toFixed(2); };
 $('randTau').onchange = e => { randTau = e.target.checked; };
 
-$('preset').onchange = e => { if (e.target.value !== 'custom') { $('rule').value = e.target.value; applyRule(); } };
+$('preset').onchange = e => {
+  const v = e.target.value;
+  if (v === 'custom') return;
+  const [k, r] = v.includes(':') ? v.split(':') : ['moore', v];  // presets carry kernel
+  kernel = KERNELS[k]; $('neigh').value = k;
+  $('rule').value = r; applyRule();
+};
+$('neigh').onchange = e => {
+  kernel = KERNELS[e.target.value];
+  $('rule').value = kernel.rule;        // recall this kernel's default rule
+  $('preset').value = 'custom';
+  applyRule();
+};
 $('topo').onchange = e => { [Cwrap, Rwrap] = TOPOS[e.target.value]; };
 $('rule').oninput = applyRule;
 function applyRule() {
-  if (parseRule($('rule').value)) $('rule').style.borderColor = '#36424f';
+  if (parseRule($('rule').value)) { $('rule').style.borderColor = '#36424f'; kernel.rule = $('rule').value; }
   else $('rule').style.borderColor = '#c4564f';
 }
 
@@ -539,8 +599,9 @@ function stepPure() {   // one generation on the current globals, returns [grid,
 }
 function selfTest() {
   const save = { g: grid, t: tau, b: birth, s: survive, cw: Cwrap, rw: Rwrap,
-                 ms: mutSigma, rng: rng };
+                 ms: mutSigma, rng: rng, k: kernel, rm: rangedMode };
   birth = new Set([3]); survive = new Set([2,3]);
+  kernel = KERNELS.moore; rangedMode = false;
   [Cwrap, Rwrap] = TOPOS.torus; mutSigma = 0; rng = Math.random;
 
   // 1. τ=0 reproduces classic rivalry: warm blinker centre + one cool foe -> dies.
@@ -570,8 +631,19 @@ function selfTest() {
   console.assert(gb[idx(21,21)] === 1, 'birth: 3 warm parents -> warm newborn');
   console.assert(Math.abs(tb[idx(21,21)] - (0.2+0.4+0.9)/3) < 1e-6, 'newborn τ = parents mean');
 
+  // 5. Weighted kernel + ranged rule: τ shields there too. Coral B6-14/S4-8.
+  //    Centre warm, two orthogonal warm allies (w3+w3=6), one orthogonal cool foe (w3).
+  kernel = KERNELS.w5x5; rangedMode = true; bLo = 6; bHi = 14; sLo = 4; sHi = 8;
+  grid = new Uint8Array(COLS*ROWS); tau = new Float32Array(COLS*ROWS);
+  grid[idx(30,30)] = 1; grid[idx(29,30)] = 1; grid[idx(30,29)] = 1; grid[idx(31,30)] = 2;
+  let [gw0] = stepPure();                     // τ=0: s = 6 − 3 = 3 < 4 → dies
+  console.assert(gw0[idx(30,30)] === 0, 'weighted τ=0: foe pressure kills the cell');
+  tau[idx(30,30)] = 1; let [gw1] = stepPure();// τ=1: s = 6 → in [4,8] → survives
+  console.assert(gw1[idx(30,30)] === 1, 'weighted τ=1: tolerance rescues under a ranged rule');
+
   grid = save.g; tau = save.t; birth = save.b; survive = save.s;
   Cwrap = save.cw; Rwrap = save.rw; mutSigma = save.ms; rng = save.rng;
+  kernel = save.k; rangedMode = save.rm;
 }
 
 // ---- boot -------------------------------------------------------------------
