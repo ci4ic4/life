@@ -42,6 +42,18 @@ fertile-selects-low-θ half. Verification includes a headless two-niche check;
 if the split doesn't appear, note it honestly (the badlands half is the robust
 part regardless).
 
+**IMPLEMENTATION FINDING (supersedes the direction above):** the split is strong
+and reproducible (Δθ ≈ 0.25 between halves) but runs **opposite** to the naive
+story. Overcrowding — not starvation — is the binding constraint under weighted
+band-pass rules: the fertile bonus pushes terrain-sensitive (low-θ) cells over
+the birth ceiling, so they sort onto the **hostile** half (penalty relieves
+crowding), while terrain-blind (high-θ) cells hold the **fertile** half. This is
+the same band-pass effect that makes τ's adaptation local. Two additions to the
+mechanic made it work: (1) birth's terrain penalty is shielded by the parent
+clan's mean θ (so a lineage can colonise, not just survive, terrain); (2) the
+verification asserts the split magnitude in the band-pass direction, and the τ
+spatial-adaptation assert now checks magnitude (sign is seed-fragile).
+
 ## Inheritance + mutation
 
 On birth, newborn `θ' = clamp(weighted-mean θ of winning-clan parents +

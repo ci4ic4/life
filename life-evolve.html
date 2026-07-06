@@ -180,6 +180,19 @@
   the raw red/green field (empty ground is tinted by it in every mode, so you always see the
   landscape under the ecology).</p>
 
+  <h3>Terrain tolerance — the θ gene</h3>
+  <p>A second heritable gene, <b>θ ∈ [0,1]</b>, sets how much a cell's survival responds to the
+  terrain: θ=0 is a <b>specialist</b> (full fertile bonus, full hostile penalty), θ=1 a
+  <b>generalist</b> (terrain-blind). It evolves like τ (same Mutation σ, seeds neutral at 0.5),
+  and it makes the population <b>sort by terrain</b> into two genotypes — visible as a split in the
+  <b>Terrain tolerance</b> colour mode across fertile vs hostile ground.</p>
+  <p><i>Which</i> genotype lands <i>where</i> is a genuine surprise: under a weighted band-pass rule
+  the sorting is driven by <b>overcrowding</b>, not starvation. The fertile bonus tips terrain-
+  sensitive cells over the birth ceiling, so they get pushed onto the <b>hostile</b> half (where the
+  penalty keeps them breeding), while terrain-blind cells hold the <b>fertile</b> half — the opposite
+  of the intuitive "generalists survive the badlands" story. Same counter-intuitive band-pass effect
+  that makes τ's adaptation local.</p>
+
   <h3>Hatch a creature (†)</h3>
   <p>The † presets are <b>Larger-than-Life creatures</b> — coherent blobs (lace disc, ring, blob)
   that only survive as a <b>single clan</b>: a rival's foe-pressure destroys them, so a mixed Random
@@ -278,6 +291,7 @@ let COLS = 80, ROWS = 40;              // N (around tube) x M (around ring); mut
 let grid = new Uint8Array(COLS * ROWS);   // 0 = dead, 1 = warm clan, 2 = cool clan
 let tau  = new Float32Array(COLS * ROWS); // tolerance gene per live cell, in [0,1]
 let env  = new Float32Array(COLS * ROWS); // static terrain, in [-1,1] (fertile+/hostile-)
+let theta = new Float32Array(COLS * ROWS);// terrain-tolerance gene per live cell, in [0,1]
 let envWeight = 4;                        // how strongly terrain biases the support
 let terrainSign = 1;                      // Terrain pen: +1 fertile, -1 hostile
 let birth = new Set([3]), survive = new Set([2,3]);          // Moore digit-set mode
@@ -365,44 +379,52 @@ function resolve(nc, nr) {
 // allies − (1−τ)·foes, so its own tolerance gene shields it from rivals. Birth
 // counts rivals in full (a newborn has no gene yet) and inherits the mean τ of
 // its winning-clan parents plus a mutation.
-function computeNext(nextGrid, nextTau) {
+function computeNext(nextGrid, nextTau, nextTheta) {
   for (let r = 0; r < ROWS; r++)
     for (let c = 0; c < COLS; c++) {
-      // weighted per-clan support + weighted τ sums (closer parents contribute
-      // more weight, so they pass proportionally more of their gene)
-      let a0 = 0, a1 = 0, tSum0 = 0, tSum1 = 0;
+      // weighted per-clan support + weighted gene sums (closer parents contribute
+      // more weight, so they pass proportionally more of each gene)
+      let a0 = 0, a1 = 0, tSum0 = 0, tSum1 = 0, thSum0 = 0, thSum1 = 0;
       for (const [dc, dr, w] of kernel.cells) {
         const i = resolve(c + dc, r + dr);
         if (i === null || !grid[i]) continue;
-        if (CLAN(grid[i]) === 0) { a0 += w; tSum0 += w * tau[i]; } else { a1 += w; tSum1 += w * tau[i]; }
+        if (CLAN(grid[i]) === 0) { a0 += w; tSum0 += w * tau[i]; thSum0 += w * theta[i]; }
+        else                     { a1 += w; tSum1 += w * tau[i]; thSum1 += w * theta[i]; }
       }
       const here = idx(c, r), alive = grid[here];
-      const eBias = envWeight * env[here];            // fertile lifts support, hostile drops it
+      const eFull = envWeight * env[here];            // full terrain effect (birth, θ-blind)
       if (alive) {
         const k = CLAN(alive);
         const allies = k === 0 ? a0 : a1, foes = k === 0 ? a1 : a0;
-        const s = allies - (1 - tau[here]) * foes + eBias;   // τ shields from foes; terrain biases
-        if (surviveOK(s)) { nextGrid[here] = alive; nextTau[here] = tau[here]; }
-        else { nextGrid[here] = 0; nextTau[here] = 0; }
+        // τ shields from foes; θ scales the terrain effect (generalist/specialist)
+        const s = allies - (1 - tau[here]) * foes + eFull * (1 - theta[here]);
+        if (surviveOK(s)) { nextGrid[here] = alive; nextTau[here] = tau[here]; nextTheta[here] = theta[here]; }
+        else { nextGrid[here] = 0; nextTau[here] = 0; nextTheta[here] = 0; }
       } else {
-        // birth: rivals count full. Both clans may qualify only at a signed 0
-        // (rules with B0) -> contested, stays dead.
-        const b0 = birthOK(a0 - a1 + eBias) && a0 > 0;
-        const b1 = birthOK(a1 - a0 + eBias) && a1 > 0;
+        // birth: rivals count full; the terrain penalty is shielded by the
+        // parent clan's mean θ, so a generalist lineage (high θ) can colonise
+        // hostile ground (not just survive it). Both clans may qualify only at a
+        // signed 0 (rules with B0) -> contested, stays dead.
+        const eb0 = a0 > 0 ? eFull * (1 - thSum0 / a0) : eFull;
+        const eb1 = a1 > 0 ? eFull * (1 - thSum1 / a1) : eFull;
+        const b0 = birthOK(a0 - a1 + eb0) && a0 > 0;
+        const b1 = birthOK(a1 - a0 + eb1) && a1 > 0;
         if (b0 !== b1) {
           const k = b0 ? 0 : 1;
           nextGrid[here] = k + 1;
-          const mean = k === 0 ? tSum0 / a0 : tSum1 / a1;   // inherit parents' mean τ
-          nextTau[here] = clamp01(mean + gauss(mutSigma));  // + mutation
-        } else { nextGrid[here] = 0; nextTau[here] = 0; }
+          const mt  = k === 0 ? tSum0 / a0 : tSum1 / a1;    // inherit parents' mean τ
+          const mth = k === 0 ? thSum0 / a0 : thSum1 / a1;  // and mean θ
+          nextTau[here]   = clamp01(mt  + gauss(mutSigma)); // + mutation (shared σ)
+          nextTheta[here] = clamp01(mth + gauss(mutSigma));
+        } else { nextGrid[here] = 0; nextTau[here] = 0; nextTheta[here] = 0; }
       }
     }
 }
 
 function step() {
-  const ng = new Uint8Array(COLS * ROWS), nt = new Float32Array(COLS * ROWS);
-  computeNext(ng, nt);
-  grid = ng; tau = nt;
+  const ng = new Uint8Array(COLS * ROWS), nt = new Float32Array(COLS * ROWS), nth = new Float32Array(COLS * ROWS);
+  computeNext(ng, nt, nth);
+  grid = ng; tau = nt; theta = nth;
   generation++;
   paint();
   updateStatus();
@@ -413,12 +435,12 @@ function seedCellTau() { return randTau ? rng() : seedTau; }
 function randomize() {
   const d = +document.getElementById('dens').value / 100;
   for (let i = 0; i < grid.length; i++) {
-    if (rng() < d) { grid[i] = 1 + (rng() < 0.5 ? 0 : 1); tau[i] = seedCellTau(); }
-    else { grid[i] = 0; tau[i] = 0; }
+    if (rng() < d) { grid[i] = 1 + (rng() < 0.5 ? 0 : 1); tau[i] = seedCellTau(); theta[i] = 0.5; }
+    else { grid[i] = 0; tau[i] = 0; theta[i] = 0; }
   }
   freshStart();
 }
-function clearGrid() { grid.fill(0); tau.fill(0); freshStart(); }
+function clearGrid() { grid.fill(0); tau.fill(0); theta.fill(0); freshStart(); }
 
 // --- terrain: static env field in [-1,1] ------------------------------------
 // Torus-wrapped squared distance between two cells (for smooth seamless bumps).
@@ -457,7 +479,7 @@ function stampGliderAt(c0, r0) {
   const cells = [[1,0],[2,1],[0,2],[1,2],[2,2]];
   for (const [dc, dr] of cells) {
     const i = idx((c0+dc+COLS) % COLS, (r0+dr+ROWS) % ROWS);
-    grid[i] = penClan + 1; tau[i] = seedTau;
+    grid[i] = penClan + 1; tau[i] = seedTau; theta[i] = 0.5;
   }
   paint(); updateStatus();
 }
@@ -473,19 +495,21 @@ function freshStart() {
 const tauHist = [];            // [{w, c}, ...] ring-ish (capped) history
 const HIST_MAX = 200;
 function meanTaus() {
-  let s0 = 0, n0 = 0, s1 = 0, n1 = 0;
+  let s0 = 0, n0 = 0, s1 = 0, n1 = 0, h0 = 0, h1 = 0;
   for (let i = 0; i < grid.length; i++) {
-    if (grid[i] === 1) { s0 += tau[i]; n0++; }
-    else if (grid[i] === 2) { s1 += tau[i]; n1++; }
+    if (grid[i] === 1) { s0 += tau[i]; h0 += theta[i]; n0++; }
+    else if (grid[i] === 2) { s1 += tau[i]; h1 += theta[i]; n1++; }
   }
-  return { w: n0 ? s0/n0 : null, c: n1 ? s1/n1 : null, n0, n1 };
+  return { w: n0 ? s0/n0 : null, c: n1 ? s1/n1 : null,
+           thw: n0 ? h0/n0 : null, thc: n1 ? h1/n1 : null, n0, n1 };
 }
 function updateStatus() {
   const m = meanTaus();
+  const fmt = x => x === null ? '—' : x.toFixed(2);
   document.getElementById('gen').textContent = generation;
   document.getElementById('pop').textContent = `${m.n0 + m.n1} (${m.n0}/${m.n1})`;
-  document.getElementById('tw').textContent = m.w === null ? '—' : m.w.toFixed(3);
-  document.getElementById('tc').textContent = m.c === null ? '—' : m.c.toFixed(3);
+  document.getElementById('tw').textContent = m.w === null ? '—' : `${m.w.toFixed(3)} θ${fmt(m.thw)}`;
+  document.getElementById('tc').textContent = m.c === null ? '—' : `${m.c.toFixed(3)} θ${fmt(m.thc)}`;
   tauHist.push({ w: m.w, c: m.c });
   if (tauHist.length > HIST_MAX) tauHist.shift();
   drawChart();
@@ -515,19 +539,24 @@ function drawChart() {
 }
 
 // ---- colour: clan ramp by τ, or a clan-agnostic τ heatmap -------------------
-let colorMode = 'clan';        // 'clan' | 'tau' | 'env'
+let colorMode = 'clan';        // 'clan' | 'tau' | 'theta' | 'env'
 const DEAD = [10, 12, 16];
 const RAMP = {                 // per-clan [dim (τ0), bright (τ1)]
   0: [[90, 26, 16], [255, 208, 96]],    // warm: maroon -> amber
   1: [[16, 32, 58], [96, 224, 255]],    // cool: navy -> cyan
 };
 const lerp = (a, b, t) => a + (b - a) * t;
-// viridis-ish 3-stop indigo -> green -> yellow for the τ heatmap
-const VIRIDIS = [[68,1,84],[33,145,140],[253,231,37]];
-function tauHeat(t) {
-  const s = t <= 0.5 ? [VIRIDIS[0], VIRIDIS[1], t*2] : [VIRIDIS[1], VIRIDIS[2], (t-0.5)*2];
+// 3-stop heatmap helper (t in [0,1] across three colour stops)
+function ramp3(stops, t) {
+  const s = t <= 0.5 ? [stops[0], stops[1], t*2] : [stops[1], stops[2], (t-0.5)*2];
   return [0,1,2].map(k => lerp(s[0][k], s[1][k], s[2]));
 }
+// viridis (indigo->green->yellow) for τ; magma (dark->magenta->warm) for θ, so the
+// two genes read as distinct maps. θ: specialist(0)=dark, generalist(1)=bright.
+const VIRIDIS = [[68,1,84],[33,145,140],[253,231,37]];
+const MAGMA   = [[20,14,40],[183,55,121],[252,222,140]];
+const tauHeat   = t => ramp3(VIRIDIS, t);
+const thetaHeat = t => ramp3(MAGMA, t);
 // Terrain colour: diverging hostile(red) -> neutral(dark) -> fertile(green).
 const HOSTILE = [150, 40, 30], FERTILE = [40, 150, 60];
 function terrainRGB(e) {
@@ -536,10 +565,11 @@ function terrainRGB(e) {
 }
 // Empty ground shows the terrain tint (dim, so cells read over it); the dedicated
 // Environment mode shows the full field for every cell, bacteria ignored.
-function cellRGB(v, t, e) {
+function cellRGB(v, t, e, th) {
   if (colorMode === 'env') return terrainRGB(e);
   if (!v) { const g = terrainRGB(e); return [0,1,2].map(k => lerp(DEAD[k], g[k], 0.6)); }
-  if (colorMode === 'tau') return tauHeat(t);
+  if (colorMode === 'tau')   return tauHeat(t);
+  if (colorMode === 'theta') return thetaHeat(th);
   const [dim, bright] = RAMP[CLAN(v)];
   return [0,1,2].map(k => lerp(dim[k], bright[k], t));
 }
@@ -568,7 +598,7 @@ tex.magFilter = tex.minFilter = THREE.NearestFilter;
 
 function paint() {
   for (let i = 0; i < grid.length; i++) {
-    const rgb = cellRGB(grid[i], tau[i], env[i]);
+    const rgb = cellRGB(grid[i], tau[i], env[i], theta[i]);
     texData[i*4+0] = rgb[0];
     texData[i*4+1] = rgb[1];
     texData[i*4+2] = rgb[2];
@@ -657,7 +687,7 @@ let downXY = null, painting = false, paintVal;   // paintVal: 0 erase, else clan
 const dom = renderer.domElement;
 function penAt(cell) {
   const i = idx(cell[0], cell[1]);
-  grid[i] = paintVal; tau[i] = paintVal ? seedTau : 0;
+  grid[i] = paintVal; tau[i] = paintVal ? seedTau : 0; theta[i] = paintVal ? 0.5 : 0;
 }
 let terrPainting = false;
 dom.addEventListener('pointerdown', e => {
@@ -689,6 +719,7 @@ function rebuild(c, r) {
   COLS = c; ROWS = r;
   grid = new Uint8Array(COLS * ROWS);
   tau  = new Float32Array(COLS * ROWS);
+  theta = new Float32Array(COLS * ROWS);
   env  = new Float32Array(COLS * ROWS);
   texData = new Uint8Array(COLS * ROWS * 4);
   tex.dispose();
@@ -720,8 +751,9 @@ function setView(twoD) {
 }
 $('view2d').onclick = () => setView(!is2D);
 $('reset').onclick  = () => setView(is2D);
-const COLOR_CYCLE = { clan: 'tau', tau: 'env', env: 'clan' };
-const COLOR_LABEL = { clan: '◧ Colour: Clan', tau: '◧ Colour: Tolerance', env: '◧ Colour: Environment' };
+const COLOR_CYCLE = { clan: 'tau', tau: 'theta', theta: 'env', env: 'clan' };
+const COLOR_LABEL = { clan: '◧ Colour: Clan', tau: '◧ Colour: Foe tolerance',
+                      theta: '◧ Colour: Terrain tolerance', env: '◧ Colour: Environment' };
 $('colorby').onclick = () => {
   colorMode = COLOR_CYCLE[colorMode];
   $('colorby').textContent = COLOR_LABEL[colorMode];
@@ -750,10 +782,10 @@ $('preset').onchange = e => {
 // Clear, then drop one compact patch of the selected clan so a Larger-than-Life
 // creature grows from it (the rival clan would kill it, so seed just one).
 function hatchCreature() {
-  grid.fill(0); tau.fill(0);
+  grid.fill(0); tau.fill(0); theta.fill(0);
   const cc = COLS>>1, rr = ROWS>>1, R = Math.min(16, (COLS>>1)-2, (ROWS>>1)-2);
   for (let r=rr-R; r<rr+R; r++) for (let c=cc-R; c<cc+R; c++)
-    if (rng() < 0.45) { const i = ((r+ROWS)%ROWS)*COLS + ((c+COLS)%COLS); grid[i] = penClan+1; tau[i] = seedTau; }
+    if (rng() < 0.45) { const i = ((r+ROWS)%ROWS)*COLS + ((c+COLS)%COLS); grid[i] = penClan+1; tau[i] = seedTau; theta[i] = 0.5; }
   freshStart();
 }
 $('neigh').onchange = e => {
@@ -775,17 +807,17 @@ addEventListener('resize', () => {
 });
 
 // ---- self-check: τ mechanic, inheritance, mutation, and selection -----------
-function stepPure() {   // one generation on the current globals, returns [grid, tau]
-  const ng = new Uint8Array(COLS*ROWS), nt = new Float32Array(COLS*ROWS);
-  computeNext(ng, nt); return [ng, nt];
+function stepPure() {   // one generation on the current globals, returns [grid, tau, theta]
+  const ng = new Uint8Array(COLS*ROWS), nt = new Float32Array(COLS*ROWS), nth = new Float32Array(COLS*ROWS);
+  computeNext(ng, nt, nth); return [ng, nt, nth];
 }
 function selfTest() {
-  const save = { g: grid, t: tau, e: env, b: birth, s: survive, cw: Cwrap, rw: Rwrap,
+  const save = { g: grid, t: tau, th: theta, e: env, b: birth, s: survive, cw: Cwrap, rw: Rwrap,
                  ms: mutSigma, rng: rng, k: kernel, rm: rangedMode, ew: envWeight };
   birth = new Set([3]); survive = new Set([2,3]);
   kernel = KERNELS.moore; rangedMode = false;
   [Cwrap, Rwrap] = TOPOS.torus; mutSigma = 0; rng = Math.random;
-  env = new Float32Array(COLS*ROWS); envWeight = 4;   // flat terrain unless a test sets it
+  env = new Float32Array(COLS*ROWS); theta = new Float32Array(COLS*ROWS); envWeight = 4;
 
   // 1. τ=0 reproduces classic rivalry: warm blinker centre + one cool foe -> dies.
   grid = new Uint8Array(COLS*ROWS); tau = new Float32Array(COLS*ROWS);
@@ -841,7 +873,39 @@ function selfTest() {
   let [ge2] = stepPure();
   console.assert(ge2[idx(40,20)] === 0, 'hostile terrain kills an otherwise-surviving cell');
 
-  grid = save.g; tau = save.t; env = save.e; birth = save.b; survive = save.s;
+  // 7. Terrain gene θ (generalist/specialist), Moore B3/S23, envWeight 4.
+  //    θ shields hostile: 2-ally cell (s=2) on hostile env=-0.5 (eFull=-2).
+  grid = new Uint8Array(COLS*ROWS); tau = new Float32Array(COLS*ROWS);
+  env = new Float32Array(COLS*ROWS); theta = new Float32Array(COLS*ROWS);
+  grid[idx(40,20)] = 1; grid[idx(41,20)] = 1; grid[idx(39,20)] = 1;   // 2 allies -> s=2
+  env[idx(40,20)] = -0.5;
+  let [gh0] = stepPure();                       // θ=0: s = 2 + (−2)·1 = 0 → dies
+  console.assert(gh0[idx(40,20)] === 0, 'θ=0 specialist dies on hostile ground');
+  theta[idx(40,20)] = 1;                        // θ=1: s = 2 + (−2)·0 = 2 → survives
+  let [gh1] = stepPure();
+  console.assert(gh1[idx(40,20)] === 1, 'θ=1 generalist survives hostile ground');
+
+  //    θ forgoes fertile: 1-ally cell (s=1) kept alive only by fertile env=0.5 (eFull=+2).
+  grid = new Uint8Array(COLS*ROWS); tau = new Float32Array(COLS*ROWS);
+  env = new Float32Array(COLS*ROWS); theta = new Float32Array(COLS*ROWS);
+  grid[idx(40,20)] = 1; grid[idx(41,20)] = 1;   // 1 ally -> s=1
+  env[idx(40,20)] = 0.5;
+  let [gf0] = stepPure();                       // θ=0: s = 1 + 2·1 = 3 → survives
+  console.assert(gf0[idx(40,20)] === 1, 'θ=0 specialist rides the fertile bonus');
+  theta[idx(40,20)] = 1;                        // θ=1: s = 1 + 2·0 = 1 → dies
+  let [gf1] = stepPure();
+  console.assert(gf1[idx(40,20)] === 0, 'θ=1 generalist forgoes the fertile bonus and dies');
+
+  //    θ inheritance: newborn θ = mean of the 3 warm parents (σ=0 exact).
+  grid = new Uint8Array(COLS*ROWS); tau = new Float32Array(COLS*ROWS);
+  env = new Float32Array(COLS*ROWS); theta = new Float32Array(COLS*ROWS);
+  grid[idx(20,20)] = grid[idx(22,20)] = grid[idx(21,22)] = 1;
+  theta[idx(20,20)] = 0.1; theta[idx(22,20)] = 0.5; theta[idx(21,22)] = 0.9;
+  let [gi,, thi] = stepPure();
+  console.assert(gi[idx(21,21)] === 1, 'birth for θ inheritance');
+  console.assert(Math.abs(thi[idx(21,21)] - (0.1+0.5+0.9)/3) < 1e-6, 'newborn θ = parents mean');
+
+  grid = save.g; tau = save.t; theta = save.th; env = save.e; birth = save.b; survive = save.s;
   Cwrap = save.cw; Rwrap = save.rw; mutSigma = save.ms; rng = save.rng;
   kernel = save.k; rangedMode = save.rm; envWeight = save.ew;
 }
