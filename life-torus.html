@@ -12,6 +12,7 @@
         padding:5px 9px; cursor:pointer; font-size:12px; }
   #ui button:hover { background:#2c3a49; }
   #ui button.tool.active { background:#5a4a1a; border-color:#ffb000; color:#ffd479; }
+  #ui button.ptype.active { background:#2c3a49; border-color:#8a96a6; }
   #ui select, #ui input[type=text] { width:100%; background:#0e1218; color:#cdd6e0;
         border:1px solid #36424f; border-radius:5px; padding:4px; box-sizing:border-box; }
   #ui input[type=range] { width:100%; }
@@ -43,6 +44,16 @@
     <option value="custom">Custom…</option>
   </select>
   <input type="text" id="rule" value="B3/S23" style="margin-top:6px">
+
+  <label>Bacteria</label>
+  <select id="species">
+    <option value="1">1 — classic</option>
+    <option value="2">2 — rivals (foe = −1)</option>
+  </select>
+  <div class="row" id="typeRow" style="display:none">
+    <button class="ptype active" data-t="1" style="color:#ffb000">■ Amber</button>
+    <button class="ptype" data-t="2" style="color:#00beff">■ Cyan</button>
+  </div>
 
   <label>Topology</label>
   <select id="topo">
@@ -102,6 +113,11 @@
   <p><b>B</b>orn / <b>S</b>urvive notation — pick a preset or type your own.
   <b>B3/S23</b> (Conway) = dead cell with 3 neighbours is born; live cell with 2 or 3 survives.</p>
 
+  <h3>Bacteria</h3>
+  <p>With <b>2 rivals</b>, a neighbour of the other type counts as <b>−1</b> instead of +1 —
+  for both birth and survival. A newborn takes the type of the class that won the cell
+  (majority parent); a contested cell stays dead. One type reduces to classic Life.</p>
+
   <h3>Topology</h3>
   <ul>
     <li><b>Torus</b> — both edge pairs wrap.</li>
@@ -134,8 +150,17 @@
 <script>
 // ---- grid / simulation ------------------------------------------------------
 let COLS = 80, ROWS = 40;              // N (around tube) x M (around ring); mutable via Apply
-let grid = new Uint8Array(COLS * ROWS);
+let grid = new Uint8Array(COLS * ROWS);   // 0 = dead, 1..NTYPES = bacteria type
 let birth = new Set([3]), survive = new Set([2,3]);
+
+// Bacteria types. cls = class; same class cooperates (+1), other class hinders (-1).
+// Extend by pushing entries (and a picker button); the sim keys off this table only.
+const TYPES = [
+  { name:'Amber', cls:0, rgb:[255,176,0] },
+  { name:'Cyan',  cls:1, rgb:[0,190,255] },
+];
+let NTYPES = 1;                        // active type count (1 = classic Life)
+let penType = 1;                       // type the Pen/Glider tools place
 
 // Topology = per-axis seam behavior. 'straight' wrap, 'flip' wrap+reverse other
 // coord (the non-orientable twist), 'none' = open boundary (off-edge cell is dead).
@@ -177,26 +202,53 @@ function resolve(nc, nr) {
   return idx(nc, nr);
 }
 
-function neighbors(c, r) {
-  let n = 0;
+// Tally live neighbors by type into counts[1..NTYPES] (counts[0] unused).
+function tallyNeighbors(c, r, counts) {
+  counts.fill(0);
   for (let dr = -1; dr <= 1; dr++)
     for (let dc = -1; dc <= 1; dc++) {
       if (!dr && !dc) continue;
       const i = resolve(c + dc, r + dr);
-      if (i !== null) n += grid[i];
+      if (i !== null && grid[i]) counts[grid[i]]++;
     }
-  return n;
+}
+
+// One generation. Effective neighbor count is signed: allies (same class) +1,
+// foes (other class) -1, for both birth and survival. Negative counts are never
+// in the B/S sets, so a foe-swamped cell simply dies / isn't born.
+function computeNext() {
+  const next = new Uint8Array(COLS * ROWS);
+  const counts = new Uint8Array(TYPES.length + 1);
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++) {
+      tallyNeighbors(c, r, counts);
+      let c0 = 0, c1 = 0;                      // live neighbors per class
+      for (let t = 1; t <= NTYPES; t++) (TYPES[t-1].cls === 0 ? c0 += counts[t] : c1 += counts[t]);
+      const alive = grid[idx(c, r)];
+      if (alive) {
+        const k = TYPES[alive-1].cls;
+        const s = k === 0 ? c0 - c1 : c1 - c0; // allies minus foes
+        next[idx(c, r)] = survive.has(s) ? alive : 0;
+      } else {
+        // With 2 classes the signed counts are exact negatives, so both can
+        // qualify only at 0 (rules with B0): contested -> stays dead.
+        const s0 = c0 - c1;
+        const b0 = birth.has(s0)  && c0 > 0;   // needs a parent of that class
+        const b1 = birth.has(-s0) && c1 > 0;
+        if (b0 !== b1) {
+          const k = b0 ? 0 : 1;                // newborn = majority type of the
+          let best = 0, bestN = 0;             // winning class (ties: lowest index)
+          for (let t = 1; t <= NTYPES; t++)
+            if (TYPES[t-1].cls === k && counts[t] > bestN) { best = t; bestN = counts[t]; }
+          next[idx(c, r)] = best;
+        }
+      }
+    }
+  return next;
 }
 
 function step() {
-  const next = new Uint8Array(COLS * ROWS);
-  for (let r = 0; r < ROWS; r++)
-    for (let c = 0; c < COLS; c++) {
-      const n = neighbors(c, r);
-      const alive = grid[idx(c, r)];
-      next[idx(c, r)] = (alive ? survive.has(n) : birth.has(n)) ? 1 : 0;
-    }
-  grid = next;
+  grid = computeNext();
   generation++;
   detect();
   paint();
@@ -221,7 +273,8 @@ function detect() {
 
 function randomize() {
   const d = +document.getElementById('dens').value / 100;
-  for (let i = 0; i < grid.length; i++) grid[i] = Math.random() < d ? 1 : 0;
+  for (let i = 0; i < grid.length; i++)
+    grid[i] = Math.random() < d ? 1 + (Math.random() * NTYPES | 0) : 0;
   freshStart();
 }
 function clearGrid() { grid.fill(0); freshStart(); }
@@ -230,7 +283,7 @@ function clearGrid() { grid.fill(0); freshStart(); }
 // so it reaches the C seam in a few gens — switch to 2D to watch it wrap/flip.
 function stampGliderAt(c0, r0) {
   const cells = [[1,0],[2,1],[0,2],[1,2],[2,2]];
-  for (const [dc, dr] of cells) grid[idx((c0+dc+COLS) % COLS, (r0+dr+ROWS) % ROWS)] = 1;
+  for (const [dc, dr] of cells) grid[idx((c0+dc+COLS) % COLS, (r0+dr+ROWS) % ROWS)] = penType;
   editPoke();                                   // mid-run edit -> reset detection, allow play
   paint(); updateStatus();
 }
@@ -242,9 +295,11 @@ function freshStart() {
 }
 
 function updateStatus() {
-  let pop = 0; for (const v of grid) pop += v;
+  const byType = new Array(TYPES.length + 1).fill(0);
+  let pop = 0; for (const v of grid) if (v) { pop++; byType[v]++; }
   document.getElementById('gen').textContent = generation;
-  document.getElementById('pop').textContent = pop;
+  document.getElementById('pop').textContent = NTYPES > 1
+    ? `${pop} (${byType.slice(1, NTYPES + 1).join('/')})` : pop;
 }
 
 // ---- WebGL: paint grid into a texture, wrap it on a torus --------------------
@@ -269,12 +324,14 @@ let texData = new Uint8Array(COLS * ROWS * 4);
 let tex = new THREE.DataTexture(texData, COLS, ROWS, THREE.RGBAFormat);
 tex.magFilter = tex.minFilter = THREE.NearestFilter;  // crisp cells, no blur
 
+const DEAD_RGB = [26, 18, 8];         // amber P3 phosphor background for the 3270 nod
 function paint() {
   for (let i = 0; i < grid.length; i++) {
-    const on = grid[i];
-    texData[i*4+0] = on ? 255 : 26;   // amber P3 phosphor (#ffb000) for the 3270 nod
-    texData[i*4+1] = on ? 176 : 18;
-    texData[i*4+2] = on ? 0   :  8;
+    const v = grid[i];
+    const rgb = v ? TYPES[v-1].rgb : DEAD_RGB;
+    texData[i*4+0] = rgb[0];
+    texData[i*4+1] = rgb[1];
+    texData[i*4+2] = rgb[2];
     texData[i*4+3] = 255;
   }
   tex.needsUpdate = true;
@@ -352,7 +409,7 @@ dom.addEventListener('pointerdown', e => {
   if (tool !== 'pen' || e.button !== 0) return;     // left paints; right/mid -> pan
   const cell = cellAt(e); if (!cell) return;
   editPoke();
-  paintVal = grid[idx(cell[0], cell[1])] ? 0 : 1;  // first cell decides draw vs erase
+  paintVal = grid[idx(cell[0], cell[1])] ? 0 : penType;  // first cell decides draw vs erase
   grid[idx(cell[0], cell[1])] = paintVal;
   painting = true; paint(); updateStatus();
 });
@@ -412,6 +469,19 @@ $('dens').oninput  = e => $('densv').textContent = (+e.target.value/100).toFixed
 $('preset').onchange = e => {
   if (e.target.value !== 'custom') { $('rule').value = e.target.value; applyRule(); }
 };
+$('species').onchange = e => {
+  NTYPES = +e.target.value;
+  $('typeRow').style.display = NTYPES > 1 ? 'flex' : 'none';
+  if (penType > NTYPES) setPenType(1);
+  for (let i = 0; i < grid.length; i++) if (grid[i] > NTYPES) grid[i] = 1; // demote orphans
+  editPoke(); paint(); updateStatus();
+};
+function setPenType(t) {
+  penType = t;
+  document.querySelectorAll('.ptype').forEach(b => b.classList.toggle('active', +b.dataset.t === t));
+}
+document.querySelectorAll('.ptype').forEach(b => b.onclick = () => setPenType(+b.dataset.t));
+
 $('topo').onchange = e => {
   [Cwrap, Rwrap] = TOPOS[e.target.value];
   editPoke();                           // neighbor structure changed -> history void
@@ -430,24 +500,26 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
-// ---- self-check: known Conway still life + blinker on the torus -------------
+// ---- self-check: Conway blinker + rival-bacteria signed count ----------------
 function selfTest() {
-  const save = { g: grid, b: birth, s: survive, cw: Cwrap, rw: Rwrap };
+  const save = { g: grid, b: birth, s: survive, cw: Cwrap, rw: Rwrap, n: NTYPES };
   birth = new Set([3]); survive = new Set([2,3]);
   [Cwrap, Rwrap] = TOPOS.torus;
+
   grid = new Uint8Array(COLS*ROWS);       // blinker: 3 in a row -> period 2
   grid[idx(10,10)] = grid[idx(11,10)] = grid[idx(12,10)] = 1;
   const before = grid.join('');
-  for (let s = 0; s < 2; s++) {           // 2 gens -> back to start; reuse the real neighbors()
-    const nx = new Uint8Array(COLS*ROWS);
-    for (let r=0;r<ROWS;r++) for (let c=0;c<COLS;c++) {
-      const n = neighbors(c, r);
-      nx[idx(c,r)] = (grid[idx(c,r)] ? survive.has(n) : birth.has(n)) ? 1 : 0;
-    }
-    grid = nx;
-  }
+  grid = computeNext(); grid = computeNext();
   console.assert(grid.join('') === before, 'Conway blinker should be period-2');
-  grid = save.g; birth = save.b; survive = save.s; Cwrap = save.cw; Rwrap = save.rw;
+
+  NTYPES = 2;                             // rival foe = -1: blinker centre has 2 allies
+  grid = new Uint8Array(COLS*ROWS);       // + 1 foe -> signed 1 -> dies under S23
+  grid[idx(10,10)] = grid[idx(10,11)] = grid[idx(10,12)] = 1;
+  grid[idx(11,11)] = 2;
+  grid = computeNext();
+  console.assert(grid[idx(10,11)] === 0, 'rival neighbor should kill blinker centre');
+
+  grid = save.g; birth = save.b; survive = save.s; Cwrap = save.cw; Rwrap = save.rw; NTYPES = save.n;
 }
 
 // ---- boot -------------------------------------------------------------------
