@@ -47,6 +47,9 @@
     <option value="B34/S34">3-4 Life — B34/S34</option>
     <option value="w5x5:B6-14/S4-8">Weighted — Coral (dense borders)</option>
     <option value="w5x5:B10-18/S12-16">Weighted — Blobs</option>
+    <option value="w5x5:B16-18/S14-26:hatch">Hatch creature — lace disc†</option>
+    <option value="w5x5:B16-22/S16-28:hatch">Hatch creature — ring†</option>
+    <option value="w5x5:B16-20/S16-28:hatch">Hatch creature — blob†</option>
     <option value="custom">Custom…</option>
   </select>
   <input type="text" id="rule" value="B3/S23" style="margin-top:6px">
@@ -150,6 +153,17 @@
   clans pressed against each other in dense fronts — so tolerance has somewhere to evolve.
   Foe weight there is large, making the selection pressure (and the brightening borders)
   much stronger than under Moore.</p>
+
+  <h3>Hatch a creature (†)</h3>
+  <p>The † presets are <b>Larger-than-Life creatures</b> — coherent blobs (lace disc, ring, blob)
+  that only survive as a <b>single clan</b>: a rival's foe-pressure destroys them, so a mixed Random
+  never grows one. Selecting a † preset therefore <b>clears the grid and drops one compact patch of
+  the selected clan</b> (pick Warm/Cool first); press <b>Play</b> and it grows into the creature.
+  It seeds at τ₀, so raise <b>Seed tolerance</b> before hatching if you want a tolerant creature.</p>
+  <p>Then the evolution tie-in: with the creature running, switch to <b>Pen</b>, pick the
+  <b>other</b> clan, and paint a patch against its flank. The contact border is where foe-pressure
+  bites — watch that edge select for higher τ (brighter in Clan colour, or use the Tolerance
+  heatmap). A creature under attack evolving a tolerant skin is the whole idea, in miniature.</p>
 
   <h3>Seeing it</h3>
   <p>Cell brightness = τ: dim cells are vulnerable (low τ), bright cells tolerant (high τ). The
@@ -639,10 +653,22 @@ $('randTau').onchange = e => { randTau = e.target.checked; };
 $('preset').onchange = e => {
   const v = e.target.value;
   if (v === 'custom') return;
-  const [k, r] = v.includes(':') ? v.split(':') : ['moore', v];  // presets carry kernel
+  // "kernel:rule" or "kernel:rule:hatch" — hatch seeds one compact single-clan
+  // patch (creatures only survive from a lone clan, not mixed random).
+  const [k, r, tail] = v.includes(':') ? v.split(':') : ['moore', v];
   kernel = KERNELS[k]; $('neigh').value = k;
   $('rule').value = r; applyRule();
+  if (tail === 'hatch') hatchCreature();
 };
+// Clear, then drop one compact patch of the selected clan so a Larger-than-Life
+// creature grows from it (the rival clan would kill it, so seed just one).
+function hatchCreature() {
+  grid.fill(0); tau.fill(0);
+  const cc = COLS>>1, rr = ROWS>>1, R = Math.min(16, (COLS>>1)-2, (ROWS>>1)-2);
+  for (let r=rr-R; r<rr+R; r++) for (let c=cc-R; c<cc+R; c++)
+    if (rng() < 0.45) { const i = ((r+ROWS)%ROWS)*COLS + ((c+COLS)%COLS); grid[i] = penClan+1; tau[i] = seedTau; }
+  freshStart();
+}
 $('neigh').onchange = e => {
   kernel = KERNELS[e.target.value];
   $('rule').value = kernel.rule;        // recall this kernel's default rule
