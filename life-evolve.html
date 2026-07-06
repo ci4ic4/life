@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Evolving Life on a Torus</title>
+<style>
+  body { margin:0; background:#0a0c10; color:#cdd6e0; font:13px/1.4 system-ui,sans-serif; overflow:hidden; }
+  #ui { position:fixed; top:10px; left:10px; z-index:10; background:#151a22ee; padding:12px 14px;
+        border:1px solid #2a3340; border-radius:8px; width:230px; }
+  #ui summary { font-size:14px; font-weight:600; cursor:pointer; margin:0 0 8px; user-select:none; }
+  #ui details:not([open]) summary { margin:0; }   /* tight box when collapsed */
+  #ui label { display:block; margin:7px 0 2px; color:#8a96a6; font-size:11px; }
+  #ui button { background:#222c39; color:#cdd6e0; border:1px solid #36424f; border-radius:5px;
+        padding:5px 9px; cursor:pointer; font-size:12px; }
+  #ui button:hover { background:#2c3a49; }
+  #ui button.tool.active { background:#5a4a1a; border-color:#ffb000; color:#ffd479; }
+  #ui select, #ui input[type=text] { width:100%; background:#0e1218; color:#cdd6e0;
+        border:1px solid #36424f; border-radius:5px; padding:4px; box-sizing:border-box; }
+  #ui input[type=range] { width:100%; }
+  #ui .grp { font-size:11px; font-weight:600; margin-top:10px; padding-top:6px; border-top:1px solid #2a3340; }
+  .row { display:flex; gap:6px; margin-top:6px; }
+  .row button { flex:1; }
+  #status { margin-top:10px; padding-top:8px; border-top:1px solid #2a3340; color:#8a96a6; font-size:11px; }
+  #status b { color:#7fd18c; }
+  #gen { color:#cdd6e0; }
+  .warm { color:#ffb060; } .cool { color:#60c8ff; }
+  dialog#help { max-width:460px; background:#151a22; color:#b8c2d0; border:1px solid #36424f;
+        border-radius:10px; padding:18px 20px; font:13px/1.5 system-ui,sans-serif; }
+  dialog#help::backdrop { background:#000a; }
+  dialog#help h2 { margin:0 0 6px; font-size:16px; color:#cdd6e0; }
+  dialog#help h3 { margin:14px 0 4px; font-size:11px; color:#ffd479; letter-spacing:.5px; text-transform:uppercase; }
+  dialog#help ul { margin:4px 0; padding-left:18px; }
+  dialog#help b { color:#cdd6e0; }
+</style>
+
+<div id="ui">
+  <details open>
+  <summary>Evolving Life on a Torus</summary>
+
+  <label>Rule (B&lt;born&gt;/S&lt;survive&gt;)</label>
+  <select id="preset">
+    <option value="B3/S23">Conway — B3/S23</option>
+    <option value="B36/S23">HighLife — B36/S23</option>
+    <option value="B34/S34">3-4 Life — B34/S34</option>
+    <option value="custom">Custom…</option>
+  </select>
+  <input type="text" id="rule" value="B3/S23" style="margin-top:6px">
+
+  <div class="grp">Evolution</div>
+  <label>Mutation σ (<span id="mutv">0.05</span>) — 0 = frozen genes</label>
+  <input type="range" id="mut" min="0" max="50" value="5">
+  <label>Seed tolerance τ₀ (<span id="seedv">0.50</span>)</label>
+  <input type="range" id="seed" min="0" max="100" value="50">
+  <label style="display:flex; align-items:center; gap:6px; margin-top:6px">
+    <input type="checkbox" id="randTau" style="width:auto"> random τ on seed</label>
+  <button id="colorby" style="margin-top:8px; width:100%">◧ Colour: Clan</button>
+
+  <label>Topology</label>
+  <select id="topo">
+    <option value="torus">Torus — wrap both</option>
+    <option value="klein">Klein bottle — flipped seam</option>
+    <option value="mobius">Möbius — 1 flipped seam, open ends</option>
+    <option value="cylinder">Cylinder — 1 wrap, open ends</option>
+  </select>
+
+  <label>Tool (click/drag on the surface)</label>
+  <div class="row">
+    <button class="tool active" data-tool="orbit">Orbit</button>
+    <button class="tool" data-tool="pen">Pen</button>
+    <button class="tool" data-tool="glider">Glider</button>
+  </div>
+  <div class="row" id="clanRow">
+    <button class="clan active" data-clan="0" style="color:#ffb060">■ Warm</button>
+    <button class="clan" data-clan="1" style="color:#60c8ff">■ Cool</button>
+  </div>
+
+  <div class="row">
+    <button id="play">▶ Play</button>
+    <button id="step">Step</button>
+  </div>
+  <div class="row">
+    <button id="rand">Random</button>
+    <button id="clear">Clear</button>
+  </div>
+
+  <label>Speed (<span id="spd">10</span> gen/s)</label>
+  <input type="range" id="speed" min="1" max="60" value="10">
+
+  <label>Density on Random (<span id="densv">0.30</span>)</label>
+  <input type="range" id="dens" min="0" max="100" value="30">
+
+  <label>Grid size (cols × rows, 20–300)</label>
+  <div class="row">
+    <input type="number" id="cols" value="80" min="20" max="300">
+    <input type="number" id="rows" value="40" min="20" max="300">
+  </div>
+  <button id="apply" style="margin-top:6px; width:100%">Apply size</button>
+
+  <button id="view2d" style="margin-top:8px; width:100%">▦ 2D view</button>
+  <button id="reset" style="margin-top:6px; width:100%">Reset view</button>
+  <button id="helpBtn" style="margin-top:6px; width:100%">Help / About</button>
+
+  <div id="status">
+    Gen <span id="gen">0</span> · pop <span id="pop">0</span><br>
+    <span class="warm">● warm</span> τ̄ <span id="tw">—</span>&nbsp;&nbsp;
+    <span class="cool">● cool</span> τ̄ <span id="tc">—</span>
+    <div style="margin-top:4px; font-size:10px; color:#566">mean tolerance vs time →</div>
+    <canvas id="chart" width="412" height="90"
+            style="width:100%; margin-top:2px; background:#0e1218; border:1px solid #2a3340; border-radius:4px;"></canvas>
+  </div>
+  </details>
+</div>
+
+<dialog id="help">
+  <h2>Evolving Life on a Torus</h2>
+  <p>Conway's Life with two rival <b>clans</b> (warm, cool) — but each live cell now carries a
+  heritable gene: its <b>tolerance</b> τ to the rival clan. Selection acts at the borders, and you
+  watch the population <b>evolve</b>.</p>
+
+  <h3>The gene: tolerance τ</h3>
+  <p>Neighbours of the same clan help (+1 each), the rival clan hinders. How much the rival hinders
+  depends on the cell's τ ∈ [0,1]: the effective support is
+  <b>allies − (1−τ)·foes</b>. τ=0 is full rivalry (a rival counts −1, the classic behaviour);
+  τ=1 ignores rivals entirely. A cell survives when that support lands in the <b>S</b> range.
+  (Birth still counts rivals in full — τ is a survival advantage only.)</p>
+
+  <h3>Inheritance &amp; selection</h3>
+  <p>A newborn inherits the average τ of its same-clan parents, plus a random <b>mutation</b>
+  (σ slider; σ=0 freezes the genes as a control). At a clan border, low-τ cells die and high-τ
+  cells survive to breed — so border colonies drift toward higher tolerance on their own. That is
+  natural selection: variation (mutation) filtered by differential survival.</p>
+
+  <h3>Seeing it</h3>
+  <p>Cell brightness = τ: dim cells are vulnerable (low τ), bright cells tolerant (high τ). Watch a
+  border brighten as it adapts. The <b>Colour</b> button switches to a τ heatmap (indigo→green→yellow)
+  that ignores clan. The graph plots mean τ per clan over time — the lines rising from the 0.5 seed
+  is the proof selection is at work.</p>
+
+  <h3>Controls</h3>
+  <ul>
+    <li><b>Mutation σ, Seed τ₀</b> — the evolution knobs; random-τ seeds a mixed gene pool.</li>
+    <li><b>Orbit / Pen / Glider</b> — Pen &amp; Glider place the selected clan at the seed τ.</li>
+    <li><b>Play / Step / Random / Clear</b>, <b>Speed, Density, Grid size</b>, <b>2D / 3D</b> — as usual.</li>
+  </ul>
+  <p>Click the title bar to collapse this panel. Esc closes this help.</p>
+
+  <button id="helpClose" style="margin-top:14px">Close</button>
+</dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+// ---- grid / simulation ------------------------------------------------------
+let COLS = 80, ROWS = 40;              // N (around tube) x M (around ring); mutable via Apply
+let grid = new Uint8Array(COLS * ROWS);   // 0 = dead, 1 = warm clan, 2 = cool clan
+let tau  = new Float32Array(COLS * ROWS); // tolerance gene per live cell, in [0,1]
+let birth = new Set([3]), survive = new Set([2,3]);
+
+const CLAN = c => c - 1;               // grid value 1/2 -> clan 0 (warm) / 1 (cool)
+let seedTau = 0.5, randTau = false, mutSigma = 0.05;
+
+// Topology = per-axis seam behavior. 'straight' wrap, 'flip' wrap+reverse other
+// coord (the non-orientable twist), 'none' = open boundary (off-edge cell is dead).
+let Cwrap = 'straight', Rwrap = 'straight';
+const TOPOS = {
+  torus:    ['straight', 'straight'],
+  klein:    ['flip',     'straight'],
+  mobius:   ['flip',     'none'],
+  cylinder: ['straight', 'none'],
+};
+let generation = 0;
+
+const idx = (c, r) => r * COLS + c;
+
+// Gaussian noise via Box–Muller. rng defaults to Math.random (swappable for tests).
+let rng = Math.random;
+function gauss(sigma) {
+  if (sigma <= 0) return 0;
+  const u = 1 - rng(), v = rng();
+  return sigma * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+const clamp01 = x => x < 0 ? 0 : x > 1 ? 1 : x;
+
+function parseRule(str) {
+  // "B3/S23" -> sets. ponytail: tolerant of spaces/case, ignores junk chars.
+  const m = str.toUpperCase().match(/B([0-8]*)\s*\/\s*S([0-8]*)/);
+  if (!m) return false;
+  birth   = new Set(m[1].split('').map(Number));
+  survive = new Set(m[2].split('').map(Number));
+  return true;
+}
+
+// Map a (possibly off-grid by one) neighbor coord back onto the grid per topology.
+function resolve(nc, nr) {
+  if (nc < 0 || nc >= COLS) {
+    if (Cwrap === 'none') return null;
+    if (Cwrap === 'flip') nr = ROWS - 1 - nr;
+    nc = (nc + COLS) % COLS;
+  }
+  if (nr < 0 || nr >= ROWS) {
+    if (Rwrap === 'none') return null;
+    if (Rwrap === 'flip') nc = COLS - 1 - nc;
+    nr = (nr + ROWS) % ROWS;
+  }
+  return idx(nc, nr);
+}
+
+// One generation. Per-clan neighbour tally; a live cell's effective support is
+// allies − (1−τ)·foes, so its own tolerance gene shields it from rivals. Birth
+// counts rivals in full (a newborn has no gene yet) and inherits the mean τ of
+// its winning-clan parents plus a mutation.
+function computeNext(nextGrid, nextTau) {
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++) {
+      let a0 = 0, a1 = 0, tSum0 = 0, tSum1 = 0;   // per-clan counts + τ sums (parents)
+      for (let dr = -1; dr <= 1; dr++)
+        for (let dc = -1; dc <= 1; dc++) {
+          if (!dr && !dc) continue;
+          const i = resolve(c + dc, r + dr);
+          if (i === null || !grid[i]) continue;
+          if (CLAN(grid[i]) === 0) { a0++; tSum0 += tau[i]; } else { a1++; tSum1 += tau[i]; }
+        }
+      const here = idx(c, r), alive = grid[here];
+      if (alive) {
+        const k = CLAN(alive);
+        const allies = k === 0 ? a0 : a1, foes = k === 0 ? a1 : a0;
+        const s = allies - (1 - tau[here]) * foes;    // τ shields from foes
+        // deterministic rule membership: round to nearest int neighbour-equivalent
+        if (survive.has(Math.round(s))) { nextGrid[here] = alive; nextTau[here] = tau[here]; }
+        else { nextGrid[here] = 0; nextTau[here] = 0; }
+      } else {
+        // birth: rivals count full. Both clans may qualify only at a signed 0
+        // (rules with B0) -> contested, stays dead.
+        const b0 = birth.has(a0 - a1) && a0 > 0;
+        const b1 = birth.has(a1 - a0) && a1 > 0;
+        if (b0 !== b1) {
+          const k = b0 ? 0 : 1;
+          nextGrid[here] = k + 1;
+          const mean = k === 0 ? tSum0 / a0 : tSum1 / a1;   // inherit parents' mean τ
+          nextTau[here] = clamp01(mean + gauss(mutSigma));  // + mutation
+        } else { nextGrid[here] = 0; nextTau[here] = 0; }
+      }
+    }
+}
+
+function step() {
+  const ng = new Uint8Array(COLS * ROWS), nt = new Float32Array(COLS * ROWS);
+  computeNext(ng, nt);
+  grid = ng; tau = nt;
+  generation++;
+  paint();
+  updateStatus();
+}
+
+function seedCellTau() { return randTau ? rng() : seedTau; }
+
+function randomize() {
+  const d = +document.getElementById('dens').value / 100;
+  for (let i = 0; i < grid.length; i++) {
+    if (rng() < d) { grid[i] = 1 + (rng() < 0.5 ? 0 : 1); tau[i] = seedCellTau(); }
+    else { grid[i] = 0; tau[i] = 0; }
+  }
+  freshStart();
+}
+function clearGrid() { grid.fill(0); tau.fill(0); freshStart(); }
+
+// Standard glider of the selected clan, all cells at the seed τ.
+function stampGliderAt(c0, r0) {
+  const cells = [[1,0],[2,1],[0,2],[1,2],[2,2]];
+  for (const [dc, dr] of cells) {
+    const i = idx((c0+dc+COLS) % COLS, (r0+dr+ROWS) % ROWS);
+    grid[i] = penClan + 1; tau[i] = seedTau;
+  }
+  paint(); updateStatus();
+}
+
+function freshStart() {
+  generation = 0;
+  tauHist.length = 0;
+  document.getElementById('gen').textContent = '0';
+  paint(); updateStatus();
+}
+
+// Mean τ per clan, for the status line and the evolution chart.
+const tauHist = [];            // [{w, c}, ...] ring-ish (capped) history
+const HIST_MAX = 200;
+function meanTaus() {
+  let s0 = 0, n0 = 0, s1 = 0, n1 = 0;
+  for (let i = 0; i < grid.length; i++) {
+    if (grid[i] === 1) { s0 += tau[i]; n0++; }
+    else if (grid[i] === 2) { s1 += tau[i]; n1++; }
+  }
+  return { w: n0 ? s0/n0 : null, c: n1 ? s1/n1 : null, n0, n1 };
+}
+function updateStatus() {
+  const m = meanTaus();
+  document.getElementById('gen').textContent = generation;
+  document.getElementById('pop').textContent = `${m.n0 + m.n1} (${m.n0}/${m.n1})`;
+  document.getElementById('tw').textContent = m.w === null ? '—' : m.w.toFixed(3);
+  document.getElementById('tc').textContent = m.c === null ? '—' : m.c.toFixed(3);
+  tauHist.push({ w: m.w, c: m.c });
+  if (tauHist.length > HIST_MAX) tauHist.shift();
+  drawChart();
+}
+function drawChart() {
+  const cv = document.getElementById('chart'); if (!cv) return;
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height, pad = 8;
+  const x = i => pad + (i / (HIST_MAX - 1)) * (W - 2*pad);
+  const y = t => (H - pad) - t * (H - 2*pad);           // τ 0..1 bottom..top
+  ctx.clearRect(0, 0, W, H);
+  ctx.strokeStyle = '#222c39'; ctx.lineWidth = 1;        // 0, 0.5, 1 gridlines
+  for (const t of [0, 0.5, 1]) { ctx.beginPath(); ctx.moveTo(pad, y(t)); ctx.lineTo(W-pad, y(t)); ctx.stroke(); }
+  const line = (key, col) => {
+    ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath();
+    let started = false;
+    tauHist.forEach((h, i) => {
+      if (h[key] === null) { started = false; return; }
+      const px = x(i), py = y(h[key]);
+      started ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+      started = true;
+    });
+    ctx.stroke();
+  };
+  line('w', '#ffb060');
+  line('c', '#60c8ff');
+}
+
+// ---- colour: clan ramp by τ, or a clan-agnostic τ heatmap -------------------
+let colorMode = 'clan';        // 'clan' | 'tau'
+const DEAD = [10, 12, 16];
+const RAMP = {                 // per-clan [dim (τ0), bright (τ1)]
+  0: [[90, 26, 16], [255, 208, 96]],    // warm: maroon -> amber
+  1: [[16, 32, 58], [96, 224, 255]],    // cool: navy -> cyan
+};
+const lerp = (a, b, t) => a + (b - a) * t;
+// viridis-ish 3-stop indigo -> green -> yellow for the τ heatmap
+const VIRIDIS = [[68,1,84],[33,145,140],[253,231,37]];
+function tauHeat(t) {
+  const s = t <= 0.5 ? [VIRIDIS[0], VIRIDIS[1], t*2] : [VIRIDIS[1], VIRIDIS[2], (t-0.5)*2];
+  return [0,1,2].map(k => lerp(s[0][k], s[1][k], s[2]));
+}
+function cellRGB(v, t) {
+  if (!v) return DEAD;
+  if (colorMode === 'tau') return tauHeat(t);
+  const [dim, bright] = RAMP[CLAN(v)];
+  return [0,1,2].map(k => lerp(dim[k], bright[k], t));
+}
+
+// ---- WebGL: paint grid into a texture, wrap it on a torus --------------------
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0c10);
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 1000);
+camera.position.set(0, 4, 9);
+const DEFAULT_CAM = camera.position.clone();
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+dir.position.set(5, 8, 6); scene.add(dir);
+
+let texData = new Uint8Array(COLS * ROWS * 4);
+let tex = new THREE.DataTexture(texData, COLS, ROWS, THREE.RGBAFormat);
+tex.magFilter = tex.minFilter = THREE.NearestFilter;
+
+function paint() {
+  for (let i = 0; i < grid.length; i++) {
+    const rgb = cellRGB(grid[i], tau[i]);
+    texData[i*4+0] = rgb[0];
+    texData[i*4+1] = rgb[1];
+    texData[i*4+2] = rgb[2];
+    texData[i*4+3] = 255;
+  }
+  tex.needsUpdate = true;
+}
+
+const torus = new THREE.Mesh(
+  new THREE.TorusGeometry(3, 1.3, ROWS, COLS),
+  new THREE.MeshStandardMaterial({ map: tex, roughness: 0.65, metalness: 0.1 })
+);
+torus.rotation.x = Math.PI / 2;
+scene.add(torus);
+
+const plane = new THREE.Mesh(
+  new THREE.PlaneGeometry(8, 8 * ROWS / COLS),
+  new THREE.MeshBasicMaterial({ map: tex })
+);
+plane.visible = false;
+scene.add(plane);
+
+// ---- timing loop ------------------------------------------------------------
+let playing = false, acc = 0, last = performance.now(), gps = 10;
+function animate(now) {
+  requestAnimationFrame(animate);
+  const dt = (now - last) / 1000; last = now;
+  if (playing) {
+    acc += dt;
+    const interval = 1 / gps;
+    while (acc >= interval) { step(); acc -= interval; }
+    if (acc > 1) acc = 0;
+  }
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+function stop()  { playing = false; document.getElementById('play').textContent = '▶ Play'; }
+function start() { playing = true;  document.getElementById('play').textContent = '⏸ Pause'; }
+
+// ---- UI wiring --------------------------------------------------------------
+const $ = id => document.getElementById(id);
+$('play').onclick  = () => playing ? stop() : start();
+$('step').onclick  = () => step();
+$('rand').onclick  = randomize;
+$('clear').onclick = clearGrid;
+$('helpBtn').onclick   = () => $('help').showModal();
+$('helpClose').onclick = () => $('help').close();
+$('help').addEventListener('click', e => { if (e.target === $('help')) $('help').close(); });
+
+let tool = 'orbit', penClan = 0;
+function setTool(t) {
+  tool = t;
+  controls.enabled = true;
+  controls.mouseButtons.LEFT = (t === 'pen') ? -1 : THREE.MOUSE.ROTATE;
+  document.querySelectorAll('.tool').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
+}
+document.querySelectorAll('.tool').forEach(b => b.onclick = () => setTool(b.dataset.tool));
+function setClan(k) {
+  penClan = k;
+  document.querySelectorAll('.clan').forEach(b => b.classList.toggle('active', +b.dataset.clan === k));
+}
+document.querySelectorAll('.clan').forEach(b => b.onclick = () => setClan(+b.dataset.clan));
+
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+function cellAt(e) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  ndc.x =  ((e.clientX - rect.left) / rect.width)  * 2 - 1;
+  ndc.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
+  raycaster.setFromCamera(ndc, camera);
+  const hit = raycaster.intersectObject(is2D ? plane : torus)[0];
+  return (hit && hit.uv) ? [Math.floor(hit.uv.x * COLS) % COLS, Math.floor(hit.uv.y * ROWS) % ROWS] : null;
+}
+
+let downXY = null, painting = false, paintVal;   // paintVal: 0 erase, else clan+1
+const dom = renderer.domElement;
+function penAt(cell) {
+  const i = idx(cell[0], cell[1]);
+  grid[i] = paintVal; tau[i] = paintVal ? seedTau : 0;
+}
+dom.addEventListener('pointerdown', e => {
+  downXY = [e.clientX, e.clientY];
+  if (tool !== 'pen' || e.button !== 0) return;
+  const cell = cellAt(e); if (!cell) return;
+  paintVal = grid[idx(cell[0], cell[1])] ? 0 : penClan + 1;   // first cell decides draw vs erase
+  penAt(cell);
+  painting = true; paint(); updateStatus();
+});
+dom.addEventListener('pointermove', e => {
+  if (!painting) return;
+  const cell = cellAt(e); if (!cell) return;
+  penAt(cell); paint(); updateStatus();
+});
+dom.addEventListener('pointerup', e => {
+  painting = false;
+  if (tool !== 'glider' || e.button !== 0 || !downXY) { downXY = null; return; }
+  const moved = Math.hypot(e.clientX - downXY[0], e.clientY - downXY[1]);
+  downXY = null;
+  if (moved > 4) return;
+  const cell = cellAt(e); if (cell) stampGliderAt(cell[0], cell[1]);
+});
+
+function rebuild(c, r) {
+  COLS = c; ROWS = r;
+  grid = new Uint8Array(COLS * ROWS);
+  tau  = new Float32Array(COLS * ROWS);
+  texData = new Uint8Array(COLS * ROWS * 4);
+  tex.dispose();
+  tex = new THREE.DataTexture(texData, COLS, ROWS, THREE.RGBAFormat);
+  tex.magFilter = tex.minFilter = THREE.NearestFilter;
+  torus.geometry.dispose();
+  torus.geometry = new THREE.TorusGeometry(3, 1.3, ROWS, COLS);
+  torus.material.map = tex; torus.material.needsUpdate = true;
+  plane.geometry.dispose();
+  plane.geometry = new THREE.PlaneGeometry(8, 8 * ROWS / COLS);
+  plane.material.map = tex; plane.material.needsUpdate = true;
+  freshStart();
+}
+$('apply').onclick = () => {
+  const c = Math.max(20, Math.min(300, +$('cols').value | 0));
+  const r = Math.max(20, Math.min(300, +$('rows').value | 0));
+  $('cols').value = c; $('rows').value = r;
+  rebuild(c, r);
+  randomize();
+};
+let is2D = false;
+function setView(twoD) {
+  is2D = twoD;
+  torus.visible = !twoD; plane.visible = twoD;
+  controls.enableRotate = !twoD;
+  camera.position.copy(twoD ? new THREE.Vector3(0,0,6) : DEFAULT_CAM);
+  controls.target.set(0,0,0); controls.update();
+  $('view2d').textContent = twoD ? '◉ 3D view' : '▦ 2D view';
+}
+$('view2d').onclick = () => setView(!is2D);
+$('reset').onclick  = () => setView(is2D);
+$('colorby').onclick = () => {
+  colorMode = colorMode === 'clan' ? 'tau' : 'clan';
+  $('colorby').textContent = colorMode === 'clan' ? '◧ Colour: Clan' : '◧ Colour: Tolerance';
+  paint();
+};
+
+$('speed').oninput = e => { gps = +e.target.value; $('spd').textContent = gps; };
+$('dens').oninput  = e => $('densv').textContent = (+e.target.value/100).toFixed(2);
+$('mut').oninput   = e => { mutSigma = +e.target.value / 100; $('mutv').textContent = mutSigma.toFixed(2); };
+$('seed').oninput  = e => { seedTau = +e.target.value / 100; $('seedv').textContent = seedTau.toFixed(2); };
+$('randTau').onchange = e => { randTau = e.target.checked; };
+
+$('preset').onchange = e => { if (e.target.value !== 'custom') { $('rule').value = e.target.value; applyRule(); } };
+$('topo').onchange = e => { [Cwrap, Rwrap] = TOPOS[e.target.value]; };
+$('rule').oninput = applyRule;
+function applyRule() {
+  if (parseRule($('rule').value)) $('rule').style.borderColor = '#36424f';
+  else $('rule').style.borderColor = '#c4564f';
+}
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ---- self-check: τ mechanic, inheritance, mutation, and selection -----------
+function stepPure() {   // one generation on the current globals, returns [grid, tau]
+  const ng = new Uint8Array(COLS*ROWS), nt = new Float32Array(COLS*ROWS);
+  computeNext(ng, nt); return [ng, nt];
+}
+function selfTest() {
+  const save = { g: grid, t: tau, b: birth, s: survive, cw: Cwrap, rw: Rwrap,
+                 ms: mutSigma, rng: rng };
+  birth = new Set([3]); survive = new Set([2,3]);
+  [Cwrap, Rwrap] = TOPOS.torus; mutSigma = 0; rng = Math.random;
+
+  // 1. τ=0 reproduces classic rivalry: warm blinker centre + one cool foe -> dies.
+  grid = new Uint8Array(COLS*ROWS); tau = new Float32Array(COLS*ROWS);
+  grid[idx(10,10)] = grid[idx(10,11)] = grid[idx(10,12)] = 1;   // warm vertical blinker
+  grid[idx(11,11)] = 2;                                          // cool foe by the centre
+  // centre (10,11): allies=2, foes=1, τ=0 -> s=1, not in S23 -> dies
+  let [g1] = stepPure();
+  console.assert(g1[idx(10,11)] === 0, 'τ=0: rival kills blinker centre (classic)');
+
+  // 2. High τ shields: same config, centre τ=1 -> s=2 -> survives.
+  tau[idx(10,10)] = tau[idx(10,11)] = tau[idx(10,12)] = 1;
+  let [g2] = stepPure();
+  console.assert(g2[idx(10,11)] === 1, 'τ=1: tolerant cell survives the same foe');
+
+  // 3. Mutation stays in [0,1] over many draws (σ large).
+  mutSigma = 5; let outOfRange = false;
+  for (let k = 0; k < 5000; k++) { const v = clamp01(0.5 + gauss(mutSigma)); if (v < 0 || v > 1) outOfRange = true; }
+  console.assert(!outOfRange, 'mutation output clamps to [0,1]');
+  mutSigma = 0;
+
+  // 4. Inheritance: newborn τ = mean of the 3 warm parents (σ=0 -> exact).
+  grid = new Uint8Array(COLS*ROWS); tau = new Float32Array(COLS*ROWS);
+  grid[idx(20,20)] = grid[idx(22,20)] = grid[idx(21,22)] = 1;   // 3 warm around (21,21)
+  tau[idx(20,20)] = 0.2; tau[idx(22,20)] = 0.4; tau[idx(21,22)] = 0.9;
+  let [gb, tb] = stepPure();
+  console.assert(gb[idx(21,21)] === 1, 'birth: 3 warm parents -> warm newborn');
+  console.assert(Math.abs(tb[idx(21,21)] - (0.2+0.4+0.9)/3) < 1e-6, 'newborn τ = parents mean');
+
+  grid = save.g; tau = save.t; birth = save.b; survive = save.s;
+  Cwrap = save.cw; Rwrap = save.rw; mutSigma = save.ms; rng = save.rng;
+}
+
+// ---- boot -------------------------------------------------------------------
+selfTest();
+parseRule('B3/S23');
+randomize();
+requestAnimationFrame(animate);
+</script>
