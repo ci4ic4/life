@@ -45,6 +45,7 @@
     <option value="w5x5:B6-14/S4-8">Weighted — Coral labyrinth</option>
     <option value="w5x5:B10-18/S12-16">Weighted — Cells / blobs</option>
     <option value="w5x5:B8-16/S8-12">Weighted — Churn</option>
+    <option value="w5x5:B6-14/S4-8:4">Weighted — Coral clans (4 types)</option>
     <option value="custom">Custom…</option>
   </select>
   <input type="text" id="rule" value="B3/S23" style="margin-top:6px">
@@ -531,9 +532,13 @@ $('dens').oninput  = e => $('densv').textContent = (+e.target.value/100).toFixed
 $('preset').onchange = e => {
   const v = e.target.value;
   if (v === 'custom') return;
-  const [k, r] = v.includes(':') ? v.split(':') : ['moore', v];  // presets carry kernel
+  // "rule" | "kernel:rule" | "kernel:rule:types" — the last picks a species count
+  // and reseeds so the bundled ecology shows without a manual Random.
+  const parts = v.includes(':') ? v.split(':') : ['moore', v];
+  const [k, r, types] = parts;
   kernel = KERNELS[k]; $('neigh').value = k;
   $('rule').value = r; applyRule();
+  if (types) { setSpecies(+types); randomize(); }
 };
 $('neigh').onchange = e => {
   kernel = KERNELS[e.target.value];
@@ -541,14 +546,16 @@ $('neigh').onchange = e => {
   $('preset').value = 'custom';
   applyRule();
 };
-$('species').onchange = e => {
-  NTYPES = +e.target.value;
+function setSpecies(n) {
+  NTYPES = n;
+  $('species').value = n;
   // fold orphans back into range; alternating classes + even NTYPES means the
   // modulo preserves each cell's clan (everything -> Amber when NTYPES = 1)
   for (let i = 0; i < grid.length; i++) if (grid[i] > NTYPES) grid[i] = (grid[i] - 1) % NTYPES + 1;
   buildTypeButtons();
   editPoke(); paint(); updateStatus();
-};
+}
+$('species').onchange = e => setSpecies(+e.target.value);
 function setPenType(t) {
   penType = t;
   document.querySelectorAll('.ptype').forEach(b => b.classList.toggle('active', +b.dataset.t === t));
