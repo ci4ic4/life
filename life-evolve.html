@@ -22,13 +22,18 @@
   #status b { color:#7fd18c; }
   #gen { color:#cdd6e0; }
   .warm { color:#ffb060; } .cool { color:#60c8ff; }
-  dialog#help { max-width:460px; background:#151a22; color:#b8c2d0; border:1px solid #36424f;
+  dialog#help, dialog#ref { max-width:460px; background:#151a22; color:#b8c2d0; border:1px solid #36424f;
         border-radius:10px; padding:18px 20px; font:13px/1.5 system-ui,sans-serif; }
-  dialog#help::backdrop { background:#000a; }
-  dialog#help h2 { margin:0 0 6px; font-size:16px; color:#cdd6e0; }
-  dialog#help h3 { margin:14px 0 4px; font-size:11px; color:#ffd479; letter-spacing:.5px; text-transform:uppercase; }
-  dialog#help ul { margin:4px 0; padding-left:18px; }
-  dialog#help b { color:#cdd6e0; }
+  dialog#help::backdrop, dialog#ref::backdrop { background:#000a; }
+  dialog#help h2, dialog#ref h2 { margin:0 0 6px; font-size:16px; color:#cdd6e0; }
+  dialog#help h3, dialog#ref h3 { margin:14px 0 4px; font-size:11px; color:#ffd479; letter-spacing:.5px; text-transform:uppercase; }
+  dialog#help ul, dialog#ref ul { margin:4px 0; padding-left:18px; }
+  dialog#help b, dialog#ref b { color:#cdd6e0; }
+  dialog#ref { max-width:500px; max-height:80vh; overflow-y:auto; }
+  dialog#ref li { margin:3px 0; }
+  dialog#ref a { color:#7fb4ff; text-decoration:none; }
+  dialog#ref a:hover { text-decoration:underline; }
+  dialog#ref .note { color:#8a96a6; font-size:11px; }
 </style>
 
 <div id="ui">
@@ -104,7 +109,10 @@
 
   <button id="view2d" style="margin-top:8px; width:100%">▦ 2D view</button>
   <button id="reset" style="margin-top:6px; width:100%">Reset view</button>
-  <button id="helpBtn" style="margin-top:6px; width:100%">Help / About</button>
+  <div class="row">
+    <button id="helpBtn">Help / About</button>
+    <button id="refBtn">Reference</button>
+  </div>
 
   <div id="status">
     Gen <span id="gen">0</span> · pop <span id="pop">0</span><br>
@@ -162,6 +170,64 @@
   <p>Click the title bar to collapse this panel. Esc closes this help.</p>
 
   <button id="helpClose" style="margin-top:14px">Close</button>
+</dialog>
+
+<dialog id="ref">
+  <h2>Reference — prior art</h2>
+  <p class="note">This toy sits at the crossing of three well-studied families of cellular automata.
+  A map of the ideas it borrows, for further reading.</p>
+
+  <h3>Weighted / large neighbourhoods</h3>
+  <ul>
+    <li><b>Weighted Life</b> — per-cell weight matrix + thresholds; the 5×5 kernel here is one.
+      <a href="https://www.mirekw.com/ca/rullex_wlif.html" target="_blank">Mirek's Cellebration</a>.</li>
+    <li><b>Larger than Life</b> — Kellie Evans; radius-<i>r</i> neighbourhoods with interval
+      birth/survival (the <i>Bx-y/Sp-q</i> notation).
+      <a href="https://en.wikipedia.org/wiki/Larger_than_Life_(cellular_automaton)" target="_blank">Wikipedia</a>.</li>
+    <li><b>SmoothLife</b> — Stephan Rafler, 2011; the continuous-space limit, swimming gliders.
+      <a href="https://arxiv.org/abs/1111.1567" target="_blank">arXiv:1111.1567</a>.</li>
+    <li><b>Lenia</b> — Bert Chan, 2018; smooth kernels + continuous states, a whole zoo of lifeforms.
+      <a href="https://chakazul.github.io/lenia.html" target="_blank">lenia project</a>.</li>
+    <li><b>MNCA</b> — Slackermanz; multiple concentric neighbourhoods, membrane/mitosis visuals.
+      <a href="https://slackermanz.com/understanding-multiple-neighborhood-cellular-automata/" target="_blank">write-up</a>.</li>
+  </ul>
+
+  <h3>Multiple species / colours</h3>
+  <ul>
+    <li><b>Immigration</b> — 2-colour Life, newborn takes the majority parent colour (~1971).
+      <a href="https://conwaylife.com/wiki/Colourised_Life" target="_blank">LifeWiki</a>.</li>
+    <li><b>QuadLife</b> — 4 colours, ties resolve to the <i>absent</i> colour (bias-free).
+      <a href="https://conwaylife.com/wiki/QuadLife" target="_blank">LifeWiki</a>.</li>
+    <li><b>Cyclic cellular automaton</b> — Griffeath; rock–paper–scissors predation, spiral waves.
+      <a href="https://en.wikipedia.org/wiki/Cyclic_cellular_automaton" target="_blank">Wikipedia</a>.</li>
+    <li><b>Wa-Tor</b> — A. K. Dewdney, Scientific American 1984; predator–prey on a torus.
+      <a href="https://en.wikipedia.org/wiki/Wa-Tor" target="_blank">Wikipedia</a>.</li>
+  </ul>
+
+  <h3>Stochastic rules</h3>
+  <ul>
+    <li><b>Probabilistic cellular automata</b> — noisy birth/survival; the extinction–survival
+      transition sits in the directed-percolation universality class.
+      <a href="https://en.wikipedia.org/wiki/Directed_percolation" target="_blank">Directed percolation</a>.
+      <span class="note">(See the sibling <i>life-stochastic.html</i>.)</span></li>
+  </ul>
+
+  <h3>Environment &amp; evolution</h3>
+  <ul>
+    <li><b>Sugarscape</b> — Epstein &amp; Axtell, 1996; agents on a resource landscape — the model
+      behind this project's planned environment field.
+      <a href="https://en.wikipedia.org/wiki/Sugarscape" target="_blank">Wikipedia</a>.</li>
+    <li><b>Inhomogeneous CA</b> — per-cell non-uniform rules/parameters (a terrain layer).
+      <a href="https://en.wikipedia.org/wiki/Cellular_automaton" target="_blank">Cellular automaton</a>.</li>
+    <li><b>Evoloop</b> — Hiroki Sayama, 1999; self-replicating loops that mutate under selection.
+      <a href="https://en.wikipedia.org/wiki/Evoloop" target="_blank">Wikipedia</a>.</li>
+    <li><b>Tierra / Avida</b> — digital-evolution systems where programs mutate and compete.
+      <a href="https://en.wikipedia.org/wiki/Avida" target="_blank">Avida</a>,
+      <a href="https://en.wikipedia.org/wiki/Tierra_(computer_simulation)" target="_blank">Tierra</a>.</li>
+  </ul>
+  <p class="note">Links open in a new tab. Titles/authors are given so a search still finds a moved page.</p>
+
+  <button id="refClose" style="margin-top:14px">Close</button>
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
@@ -467,6 +533,9 @@ $('clear').onclick = clearGrid;
 $('helpBtn').onclick   = () => $('help').showModal();
 $('helpClose').onclick = () => $('help').close();
 $('help').addEventListener('click', e => { if (e.target === $('help')) $('help').close(); });
+$('refBtn').onclick    = () => $('ref').showModal();
+$('refClose').onclick  = () => $('ref').close();
+$('ref').addEventListener('click', e => { if (e.target === $('ref')) $('ref').close(); });
 
 let tool = 'orbit', penClan = 0;
 function setTool(t) {
