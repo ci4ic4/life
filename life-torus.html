@@ -13,6 +13,7 @@
   #ui button:hover { background:#2c3a49; }
   #ui button.tool.active { background:#5a4a1a; border-color:#ffb000; color:#ffd479; }
   #ui button.ptype.active { background:#2c3a49; border-color:#8a96a6; }
+  #typeRow button { flex:1 1 45%; }   /* 2 per row; 6 types -> 3 tidy rows */
   #ui select, #ui input[type=text] { width:100%; background:#0e1218; color:#cdd6e0;
         border:1px solid #36424f; border-radius:5px; padding:4px; box-sizing:border-box; }
   #ui input[type=range] { width:100%; }
@@ -49,11 +50,10 @@
   <select id="species">
     <option value="1">1 — classic</option>
     <option value="2">2 — rivals (foe = −1)</option>
+    <option value="4">4 — two clans of 2</option>
+    <option value="6">6 — two clans of 3</option>
   </select>
-  <div class="row" id="typeRow" style="display:none">
-    <button class="ptype active" data-t="1" style="color:#ffb000">■ Amber</button>
-    <button class="ptype" data-t="2" style="color:#00beff">■ Cyan</button>
-  </div>
+  <div class="row" id="typeRow" style="display:none; flex-wrap:wrap"></div>
 
   <label>Topology</label>
   <select id="topo">
@@ -106,17 +106,24 @@
 <dialog id="help">
   <h2>Life on a Torus</h2>
   <p>Conway's Game of Life on a wrap-around grid, drawn on a 3D torus. Each generation, cells
-  live or die by their 8 neighbours. The grid's edges are glued, so patterns leaving one side
-  return on the other — the simulation really runs on the chosen surface; the donut just shows it.</p>
+  live or die by their 8 neighbours (with several bacteria types, by a <i>signed</i> count —
+  see Bacteria). The grid's edges are glued, so patterns leaving one side return on the
+  other — the simulation really runs on the chosen surface; the donut just shows it.</p>
 
   <h3>Rule</h3>
   <p><b>B</b>orn / <b>S</b>urvive notation — pick a preset or type your own.
   <b>B3/S23</b> (Conway) = dead cell with 3 neighbours is born; live cell with 2 or 3 survives.</p>
 
   <h3>Bacteria</h3>
-  <p>With <b>2 rivals</b>, a neighbour of the other type counts as <b>−1</b> instead of +1 —
-  for both birth and survival. A newborn takes the type of the class that won the cell
-  (majority parent); a contested cell stays dead. One type reduces to classic Life.</p>
+  <p>The selector picks 1, 2, 4 or 6 bacteria types, split into two <b>clans</b> —
+  warm colours (Amber, Rose, Magenta) vs cool (Cyan, Lime, Violet). A neighbour of the
+  same clan counts <b>+1</b> (types cooperate), the other clan counts <b>−1</b> — for both
+  birth and survival, so a foe-swamped cell dies and a contested spot stays barren.
+  A newborn takes the majority parent type of the clan that won the cell.
+  One type reduces to classic Life; shrinking the count folds existing cells back into
+  the remaining types without changing clan. With several types, the coloured buttons
+  choose what Pen and Glider place, <b>Random</b> seeds all active types evenly, and the
+  status line splits the population per type in button order.</p>
 
   <h3>Topology</h3>
   <ul>
@@ -128,8 +135,9 @@
   <h3>Tools (act on the surface)</h3>
   <ul>
     <li><b>Orbit</b> — left-drag rotate, right-drag pan, wheel zoom.</li>
-    <li><b>Pen</b> — left-drag paints cells (first cell sets draw vs erase); right-drag still pans.</li>
-    <li><b>Glider</b> — left-click drops a glider where you click.</li>
+    <li><b>Pen</b> — left-drag paints the selected type (first cell sets draw vs erase);
+        right-drag still pans.</li>
+    <li><b>Glider</b> — left-click drops a glider of the selected type where you click.</li>
   </ul>
 
   <h3>Run &amp; shape</h3>
@@ -154,10 +162,15 @@ let grid = new Uint8Array(COLS * ROWS);   // 0 = dead, 1..NTYPES = bacteria type
 let birth = new Set([3]), survive = new Set([2,3]);
 
 // Bacteria types. cls = class; same class cooperates (+1), other class hinders (-1).
-// Extend by pushing entries (and a picker button); the sim keys off this table only.
+// Classes alternate so any even NTYPES prefix stays balanced (and (v-1)%NTYPES
+// preserves class when shrinking). Warm hues = clan 0, cool hues = clan 1.
 const TYPES = [
-  { name:'Amber', cls:0, rgb:[255,176,0] },
-  { name:'Cyan',  cls:1, rgb:[0,190,255] },
+  { name:'Amber',   cls:0, rgb:[255,176,0]  },
+  { name:'Cyan',    cls:1, rgb:[0,190,255]  },
+  { name:'Rose',    cls:0, rgb:[255,80,120] },
+  { name:'Lime',    cls:1, rgb:[110,235,80] },
+  { name:'Magenta', cls:0, rgb:[255,60,220] },
+  { name:'Violet',  cls:1, rgb:[140,100,255]},
 ];
 let NTYPES = 1;                        // active type count (1 = classic Life)
 let penType = 1;                       // type the Pen/Glider tools place
@@ -471,16 +484,30 @@ $('preset').onchange = e => {
 };
 $('species').onchange = e => {
   NTYPES = +e.target.value;
-  $('typeRow').style.display = NTYPES > 1 ? 'flex' : 'none';
-  if (penType > NTYPES) setPenType(1);
-  for (let i = 0; i < grid.length; i++) if (grid[i] > NTYPES) grid[i] = 1; // demote orphans
+  // fold orphans back into range; alternating classes + even NTYPES means the
+  // modulo preserves each cell's clan (everything -> Amber when NTYPES = 1)
+  for (let i = 0; i < grid.length; i++) if (grid[i] > NTYPES) grid[i] = (grid[i] - 1) % NTYPES + 1;
+  buildTypeButtons();
   editPoke(); paint(); updateStatus();
 };
 function setPenType(t) {
   penType = t;
   document.querySelectorAll('.ptype').forEach(b => b.classList.toggle('active', +b.dataset.t === t));
 }
-document.querySelectorAll('.ptype').forEach(b => b.onclick = () => setPenType(+b.dataset.t));
+function buildTypeButtons() {          // picker mirrors the active TYPES prefix
+  const row = $('typeRow');
+  row.style.display = NTYPES > 1 ? 'flex' : 'none';
+  row.innerHTML = '';
+  for (let t = 1; t <= NTYPES; t++) {
+    const b = document.createElement('button');
+    b.className = 'ptype'; b.dataset.t = t;
+    b.textContent = '■ ' + TYPES[t-1].name;
+    b.style.color = `rgb(${TYPES[t-1].rgb})`;
+    b.onclick = () => setPenType(t);
+    row.appendChild(b);
+  }
+  setPenType(Math.min(penType, NTYPES));
+}
 
 $('topo').onchange = e => {
   [Cwrap, Rwrap] = TOPOS[e.target.value];
@@ -519,12 +546,20 @@ function selfTest() {
   grid = computeNext();
   console.assert(grid[idx(10,11)] === 0, 'rival neighbor should kill blinker centre');
 
+  NTYPES = 4;                             // cooperation: 2 amber + 1 rose (same clan)
+  grid = new Uint8Array(COLS*ROWS);       // around a dead cell -> signed 3 -> B3 birth,
+  grid[idx(10,10)] = grid[idx(12,10)] = 1;// child = majority type of the clan (amber)
+  grid[idx(11,12)] = 3;
+  grid = computeNext();
+  console.assert(grid[idx(11,11)] === 1, 'same-clan types should cooperate on birth');
+
   grid = save.g; birth = save.b; survive = save.s; Cwrap = save.cw; Rwrap = save.rw; NTYPES = save.n;
 }
 
 // ---- boot -------------------------------------------------------------------
 selfTest();
 parseRule('B3/S23');
+buildTypeButtons();
 randomize();
 requestAnimationFrame(animate);
 </script>
