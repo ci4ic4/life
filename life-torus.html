@@ -42,9 +42,18 @@
     <option value="B36/S23">HighLife — B36/S23</option>
     <option value="B2/S">Seeds — B2/S</option>
     <option value="B34/S34">3-4 Life — B34/S34</option>
+    <option value="w5x5:B6-14/S4-8">Weighted — Coral labyrinth</option>
+    <option value="w5x5:B10-18/S12-16">Weighted — Cells / blobs</option>
+    <option value="w5x5:B8-16/S8-12">Weighted — Churn</option>
     <option value="custom">Custom…</option>
   </select>
   <input type="text" id="rule" value="B3/S23" style="margin-top:6px">
+
+  <label>Neighborhood</label>
+  <select id="neigh">
+    <option value="moore">Moore — 8 cells, ±1</option>
+    <option value="w5x5">Weighted 5×5 — 24 cells, max 40</option>
+  </select>
 
   <label>Bacteria</label>
   <select id="species">
@@ -114,6 +123,13 @@
   <p><b>B</b>orn / <b>S</b>urvive notation — pick a preset or type your own.
   <b>B3/S23</b> (Conway) = dead cell with 3 neighbours is born; live cell with 2 or 3 survives.</p>
 
+  <h3>Neighborhood</h3>
+  <p><b>Moore</b> — the classic 8 adjacent cells, each counting 1; rules are digit sets
+  (B3/S23). <b>Weighted 5×5</b> — 24 cells; the ring at distance 1 counts 2–3, the outer
+  ring 1–2 (orthogonal beats diagonal), total 40. Rules there are ranges
+  <b>Bx-y/Sp-q</b> (1–40): birth when the weighted sum falls in the B range, survival
+  in the S range — a "Larger than Life"-style rule with distance-decaying weights.</p>
+
   <h3>Bacteria</h3>
   <p>The selector picks 1, 2, 4 or 6 bacteria types, split into two <b>clans</b> —
   warm colours (Amber, Rose, Magenta) vs cool (Cyan, Lime, Violet). A neighbour of the
@@ -160,7 +176,27 @@
 // ---- grid / simulation ------------------------------------------------------
 let COLS = 80, ROWS = 40;              // N (around tube) x M (around ring); mutable via Apply
 let grid = new Uint8Array(COLS * ROWS);   // 0 = dead, 1..NTYPES = bacteria type
-let birth = new Set([3]), survive = new Set([2,3]);
+let birth = new Set([3]), survive = new Set([2,3]);          // Moore digit-set mode
+let bLo = 3, bHi = 3, sLo = 2, sHi = 3, rangedMode = false;  // weighted-range mode
+
+// Neighborhood kernels: [dc, dr, weight] per contributing cell. The weighted 5x5
+// (Larger-than-Life style) sums to 40; rules there use ranges Bx-y/Sp-q.
+function kernelCells(mat) {
+  const cells = [], h = mat.length >> 1;
+  mat.forEach((row, r) => row.forEach((w, c) => { if (w) cells.push([c - h, r - h, w]); }));
+  return cells;
+}
+const KERNELS = {
+  moore: { max: 8, rule: 'B3/S23', cells: kernelCells([[1,1,1],[1,0,1],[1,1,1]]) },
+  w5x5:  { max: 40, rule: 'B14-18/S12-24', cells: kernelCells([
+    [1,1,2,1,1],
+    [1,2,3,2,1],
+    [2,3,0,3,2],
+    [1,2,3,2,1],
+    [1,1,2,1,1],
+  ]) },
+};
+let kernel = KERNELS.moore;
 
 // Bacteria types. cls = class; same class cooperates (+1), other class hinders (-1).
 // Classes alternate so any even NTYPES prefix stays balanced (and (v-1)%NTYPES
@@ -192,6 +228,15 @@ let halted = false;
 const idx = (c, r) => r * COLS + c;
 
 function parseRule(str) {
+  rangedMode = kernel.max > 8;
+  if (rangedMode) {
+    // "B14-18/S12-24" (single value = degenerate range). Bounds 1..kernel.max.
+    const m = str.toUpperCase().match(/B(\d+)(?:-(\d+))?\s*\/\s*S(\d+)(?:-(\d+))?/);
+    if (!m) return false;
+    bLo = +m[1]; bHi = +(m[2] ?? m[1]); sLo = +m[3]; sHi = +(m[4] ?? m[3]);
+    return bLo >= 1 && bLo <= bHi && bHi <= kernel.max &&
+           sLo >= 1 && sLo <= sHi && sHi <= kernel.max;
+  }
   // "B3/S23" -> sets. ponytail: tolerant of spaces/case, ignores junk chars.
   const m = str.toUpperCase().match(/B([0-8]*)\s*\/\s*S([0-8]*)/);
   if (!m) return false;
@@ -199,6 +244,8 @@ function parseRule(str) {
   survive = new Set(m[2].split('').map(Number));
   return true;
 }
+const birthOK   = n => rangedMode ? n >= bLo && n <= bHi : birth.has(n);
+const surviveOK = n => rangedMode ? n >= sLo && n <= sHi : survive.has(n);
 
 // Map a (possibly off-grid by one) neighbor coord back onto the grid per topology.
 // Returns null if it falls off an open ('none') boundary -> counts as dead.
@@ -216,20 +263,18 @@ function resolve(nc, nr) {
   return idx(nc, nr);
 }
 
-// Tally live neighbors by type into counts[1..NTYPES] (counts[0] unused).
+// Tally weighted live neighbors by type into counts[1..NTYPES] (counts[0] unused).
 function tallyNeighbors(c, r, counts) {
   counts.fill(0);
-  for (let dr = -1; dr <= 1; dr++)
-    for (let dc = -1; dc <= 1; dc++) {
-      if (!dr && !dc) continue;
-      const i = resolve(c + dc, r + dr);
-      if (i !== null && grid[i]) counts[grid[i]]++;
-    }
+  for (const [dc, dr, w] of kernel.cells) {
+    const i = resolve(c + dc, r + dr);
+    if (i !== null && grid[i]) counts[grid[i]] += w;
+  }
 }
 
-// One generation. Effective neighbor count is signed: allies (same class) +1,
-// foes (other class) -1, for both birth and survival. Negative counts are never
-// in the B/S sets, so a foe-swamped cell simply dies / isn't born.
+// One generation. Effective neighbor count is signed: allies (same class) add
+// their kernel weight, foes subtract it, for both birth and survival. Negative
+// counts never satisfy B/S, so a foe-swamped cell simply dies / isn't born.
 function computeNext() {
   const next = new Uint8Array(COLS * ROWS);
   const counts = new Uint8Array(TYPES.length + 1);
@@ -242,13 +287,13 @@ function computeNext() {
       if (alive) {
         const k = TYPES[alive-1].cls;
         const s = k === 0 ? c0 - c1 : c1 - c0; // allies minus foes
-        next[idx(c, r)] = survive.has(s) ? alive : 0;
+        next[idx(c, r)] = surviveOK(s) ? alive : 0;
       } else {
         // With 2 classes the signed counts are exact negatives, so both can
         // qualify only at 0 (rules with B0): contested -> stays dead.
         const s0 = c0 - c1;
-        const b0 = birth.has(s0)  && c0 > 0;   // needs a parent of that class
-        const b1 = birth.has(-s0) && c1 > 0;
+        const b0 = birthOK(s0)  && c0 > 0;     // needs a parent of that class
+        const b1 = birthOK(-s0) && c1 > 0;
         if (b0 !== b1) {
           const k = b0 ? 0 : 1;                // newborn = majority type of the winning
           let best = 0, bestN = 0, tie = false;// class; tied majority -> no birth (a
@@ -484,7 +529,17 @@ $('speed').oninput = e => { gps = +e.target.value; $('spd').textContent = gps; }
 $('dens').oninput  = e => $('densv').textContent = (+e.target.value/100).toFixed(2);
 
 $('preset').onchange = e => {
-  if (e.target.value !== 'custom') { $('rule').value = e.target.value; applyRule(); }
+  const v = e.target.value;
+  if (v === 'custom') return;
+  const [k, r] = v.includes(':') ? v.split(':') : ['moore', v];  // presets carry kernel
+  kernel = KERNELS[k]; $('neigh').value = k;
+  $('rule').value = r; applyRule();
+};
+$('neigh').onchange = e => {
+  kernel = KERNELS[e.target.value];
+  $('rule').value = kernel.rule;        // recall last valid rule for this kernel
+  $('preset').value = 'custom';
+  applyRule();
 };
 $('species').onchange = e => {
   NTYPES = +e.target.value;
@@ -522,6 +577,7 @@ $('rule').oninput = applyRule;
 function applyRule() {
   if (parseRule($('rule').value)) {
     $('rule').style.borderColor = '#36424f';
+    kernel.rule = $('rule').value;      // per-kernel memory for the neigh switch
     editPoke();                         // rule changed -> old history meaningless
   } else $('rule').style.borderColor = '#c4564f';
 }
@@ -533,8 +589,9 @@ addEventListener('resize', () => {
 
 // ---- self-check: Conway blinker + rival-bacteria signed count ----------------
 function selfTest() {
-  const save = { g: grid, b: birth, s: survive, cw: Cwrap, rw: Rwrap, n: NTYPES };
+  const save = { g: grid, b: birth, s: survive, cw: Cwrap, rw: Rwrap, n: NTYPES, k: kernel, rm: rangedMode };
   birth = new Set([3]); survive = new Set([2,3]);
+  kernel = KERNELS.moore; rangedMode = false;
   [Cwrap, Rwrap] = TOPOS.torus;
 
   grid = new Uint8Array(COLS*ROWS);       // blinker: 3 in a row -> period 2
@@ -564,7 +621,17 @@ function selfTest() {
   grid = computeNext();
   console.assert(grid[idx(11,11)] === 0, 'tied intra-clan majority should not give birth');
 
-  grid = save.g; birth = save.b; survive = save.s; Cwrap = save.cw; Rwrap = save.rw; NTYPES = save.n;
+  NTYPES = 1; kernel = KERNELS.w5x5;      // weighted kernel reach: lone cell, B1-40
+  console.assert(parseRule('B1-40/S1-40'), 'ranged rule should parse');
+  grid = new Uint8Array(COLS*ROWS);       // births exactly within the 5x5 minus centre
+  grid[idx(10,10)] = 1;
+  grid = computeNext();
+  console.assert(grid[idx(12,12)] === 1, 'kernel corner (w=1) should give birth');
+  console.assert(grid[idx(13,13)] === 0, 'outside kernel reach: no birth');
+  console.assert(grid[idx(10,10)] === 0, 'lone cell (signed 0) should die');
+
+  grid = save.g; birth = save.b; survive = save.s; Cwrap = save.cw; Rwrap = save.rw;
+  NTYPES = save.n; kernel = save.k; rangedMode = save.rm;
 }
 
 // ---- boot -------------------------------------------------------------------
