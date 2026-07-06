@@ -12,6 +12,7 @@
         padding:5px 9px; cursor:pointer; font-size:12px; }
   #ui button:hover { background:#2c3a49; }
   #ui button.tool.active { background:#5a4a1a; border-color:#ffb000; color:#ffd479; }
+  #ui button.clan.active, #ui button.terr.active { background:#2c3a49; border-color:#8a96a6; }
   #ui select, #ui input[type=text] { width:100%; background:#0e1218; color:#cdd6e0;
         border:1px solid #36424f; border-radius:5px; padding:4px; box-sizing:border-box; }
   #ui input[type=range] { width:100%; }
@@ -69,6 +70,14 @@
     <input type="checkbox" id="randTau" style="width:auto"> random τ on seed</label>
   <button id="colorby" style="margin-top:8px; width:100%">◧ Colour: Clan</button>
 
+  <div class="grp">Environment</div>
+  <label>Terrain strength (<span id="envwv">4</span>) — 0 = off</label>
+  <input type="range" id="envw" min="0" max="20" value="4">
+  <div class="row">
+    <button id="genTerr">Generate</button>
+    <button id="flatTerr">Flat</button>
+  </div>
+
   <label>Topology</label>
   <select id="topo">
     <option value="torus">Torus — wrap both</option>
@@ -82,10 +91,15 @@
     <button class="tool active" data-tool="orbit">Orbit</button>
     <button class="tool" data-tool="pen">Pen</button>
     <button class="tool" data-tool="glider">Glider</button>
+    <button class="tool" data-tool="terrain">Terrain</button>
   </div>
   <div class="row" id="clanRow">
     <button class="clan active" data-clan="0" style="color:#ffb060">■ Warm</button>
     <button class="clan" data-clan="1" style="color:#60c8ff">■ Cool</button>
+  </div>
+  <div class="row" id="terrRow" style="display:none">
+    <button class="terr active" data-sign="1" style="color:#5cd06c">■ Fertile</button>
+    <button class="terr" data-sign="-1" style="color:#e0604a">■ Hostile</button>
   </div>
 
   <div class="row">
@@ -153,6 +167,18 @@
   clans pressed against each other in dense fronts — so tolerance has somewhere to evolve.
   Foe weight there is large, making the selection pressure (and the brightening borders)
   much stronger than under Moore.</p>
+
+  <h3>Environment (the terrain)</h3>
+  <p>A static <b>landscape</b> underlies the grid: each cell is <b>fertile</b> (green) or
+  <b>hostile</b> (red). Terrain adds a bias to the birth/survival support —
+  <b>Terrain strength</b> sets how much (0 = off) — so life pools in fertile hollows and
+  shuns hostile ground, which becomes barriers and dead zones. It shapes <i>where</i> life
+  grows; τ still evolves within it.</p>
+  <p><b>Generate</b> lays down a random terrain-like landscape (basins and ridges); <b>Flat</b>
+  clears it. The <b>Terrain</b> tool paints it by hand — pick <b>Fertile</b> or <b>Hostile</b>
+  and drag. The <b>Colour</b> button cycles Clan → Tolerance → <b>Environment</b>; the last shows
+  the raw red/green field (empty ground is tinted by it in every mode, so you always see the
+  landscape under the ecology).</p>
 
   <h3>Hatch a creature (†)</h3>
   <p>The † presets are <b>Larger-than-Life creatures</b> — coherent blobs (lace disc, ring, blob)
@@ -251,6 +277,9 @@
 let COLS = 80, ROWS = 40;              // N (around tube) x M (around ring); mutable via Apply
 let grid = new Uint8Array(COLS * ROWS);   // 0 = dead, 1 = warm clan, 2 = cool clan
 let tau  = new Float32Array(COLS * ROWS); // tolerance gene per live cell, in [0,1]
+let env  = new Float32Array(COLS * ROWS); // static terrain, in [-1,1] (fertile+/hostile-)
+let envWeight = 4;                        // how strongly terrain biases the support
+let terrainSign = 1;                      // Terrain pen: +1 fertile, -1 hostile
 let birth = new Set([3]), survive = new Set([2,3]);          // Moore digit-set mode
 let bLo = 3, bHi = 3, sLo = 2, sHi = 3, rangedMode = false;  // weighted-range mode
 
@@ -348,17 +377,18 @@ function computeNext(nextGrid, nextTau) {
         if (CLAN(grid[i]) === 0) { a0 += w; tSum0 += w * tau[i]; } else { a1 += w; tSum1 += w * tau[i]; }
       }
       const here = idx(c, r), alive = grid[here];
+      const eBias = envWeight * env[here];            // fertile lifts support, hostile drops it
       if (alive) {
         const k = CLAN(alive);
         const allies = k === 0 ? a0 : a1, foes = k === 0 ? a1 : a0;
-        const s = allies - (1 - tau[here]) * foes;    // τ shields from foes
+        const s = allies - (1 - tau[here]) * foes + eBias;   // τ shields from foes; terrain biases
         if (surviveOK(s)) { nextGrid[here] = alive; nextTau[here] = tau[here]; }
         else { nextGrid[here] = 0; nextTau[here] = 0; }
       } else {
         // birth: rivals count full. Both clans may qualify only at a signed 0
         // (rules with B0) -> contested, stays dead.
-        const b0 = birthOK(a0 - a1) && a0 > 0;
-        const b1 = birthOK(a1 - a0) && a1 > 0;
+        const b0 = birthOK(a0 - a1 + eBias) && a0 > 0;
+        const b1 = birthOK(a1 - a0 + eBias) && a1 > 0;
         if (b0 !== b1) {
           const k = b0 ? 0 : 1;
           nextGrid[here] = k + 1;
@@ -389,6 +419,38 @@ function randomize() {
   freshStart();
 }
 function clearGrid() { grid.fill(0); tau.fill(0); freshStart(); }
+
+// --- terrain: static env field in [-1,1] ------------------------------------
+// Torus-wrapped squared distance between two cells (for smooth seamless bumps).
+function wrapDist2(c0, r0, c1, r1) {
+  let dc = Math.abs(c0 - c1); if (dc > COLS/2) dc = COLS - dc;
+  let dr = Math.abs(r0 - r1); if (dr > ROWS/2) dr = ROWS - dr;
+  return dc*dc + dr*dr;
+}
+// Generate terrain-like relief: sum of a handful of Gaussian bumps of mixed
+// sign (basins + ridges), then normalise to ~[-1,1]. Not white noise.
+function generateTerrain() {
+  const bumps = 9, sigma = Math.min(COLS, ROWS) / 4, twoSig2 = 2 * sigma * sigma;
+  env.fill(0);
+  for (let b = 0; b < bumps; b++) {
+    const bc = rng()*COLS, br = rng()*ROWS, amp = (rng()*2 - 1);   // signed amplitude
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++)
+      env[r*COLS+c] += amp * Math.exp(-wrapDist2(c, r, bc, br) / twoSig2);
+  }
+  let max = 0; for (const v of env) { const a = Math.abs(v); if (a > max) max = a; }
+  if (max > 0) for (let i = 0; i < env.length; i++) env[i] /= max;   // normalise to [-1,1]
+  paint();
+}
+function flatTerrain() { env.fill(0); paint(); }
+// Terrain pen: brush a soft radial bump of the chosen sign, accumulate + clamp.
+function terrainAt(cell) {
+  const [c0, r0] = cell, R = 5, twoSig2 = 2 * (R/2) * (R/2);
+  for (let dr = -R; dr <= R; dr++) for (let dc = -R; dc <= R; dc++) {
+    const i = resolve(c0 + dc, r0 + dr); if (i === null) continue;
+    const v = env[i] + terrainSign * 0.35 * Math.exp(-(dc*dc+dr*dr) / twoSig2);
+    env[i] = v < -1 ? -1 : v > 1 ? 1 : v;
+  }
+}
 
 // Standard glider of the selected clan, all cells at the seed τ.
 function stampGliderAt(c0, r0) {
@@ -453,7 +515,7 @@ function drawChart() {
 }
 
 // ---- colour: clan ramp by τ, or a clan-agnostic τ heatmap -------------------
-let colorMode = 'clan';        // 'clan' | 'tau'
+let colorMode = 'clan';        // 'clan' | 'tau' | 'env'
 const DEAD = [10, 12, 16];
 const RAMP = {                 // per-clan [dim (τ0), bright (τ1)]
   0: [[90, 26, 16], [255, 208, 96]],    // warm: maroon -> amber
@@ -466,8 +528,17 @@ function tauHeat(t) {
   const s = t <= 0.5 ? [VIRIDIS[0], VIRIDIS[1], t*2] : [VIRIDIS[1], VIRIDIS[2], (t-0.5)*2];
   return [0,1,2].map(k => lerp(s[0][k], s[1][k], s[2]));
 }
-function cellRGB(v, t) {
-  if (!v) return DEAD;
+// Terrain colour: diverging hostile(red) -> neutral(dark) -> fertile(green).
+const HOSTILE = [150, 40, 30], FERTILE = [40, 150, 60];
+function terrainRGB(e) {
+  if (e >= 0) return [0,1,2].map(k => lerp(DEAD[k], FERTILE[k], e));
+  return [0,1,2].map(k => lerp(DEAD[k], HOSTILE[k], -e));
+}
+// Empty ground shows the terrain tint (dim, so cells read over it); the dedicated
+// Environment mode shows the full field for every cell, bacteria ignored.
+function cellRGB(v, t, e) {
+  if (colorMode === 'env') return terrainRGB(e);
+  if (!v) { const g = terrainRGB(e); return [0,1,2].map(k => lerp(DEAD[k], g[k], 0.6)); }
   if (colorMode === 'tau') return tauHeat(t);
   const [dim, bright] = RAMP[CLAN(v)];
   return [0,1,2].map(k => lerp(dim[k], bright[k], t));
@@ -497,7 +568,7 @@ tex.magFilter = tex.minFilter = THREE.NearestFilter;
 
 function paint() {
   for (let i = 0; i < grid.length; i++) {
-    const rgb = cellRGB(grid[i], tau[i]);
+    const rgb = cellRGB(grid[i], tau[i], env[i]);
     texData[i*4+0] = rgb[0];
     texData[i*4+1] = rgb[1];
     texData[i*4+2] = rgb[2];
@@ -555,8 +626,9 @@ let tool = 'orbit', penClan = 0;
 function setTool(t) {
   tool = t;
   controls.enabled = true;
-  controls.mouseButtons.LEFT = (t === 'pen') ? -1 : THREE.MOUSE.ROTATE;
+  controls.mouseButtons.LEFT = (t === 'pen' || t === 'terrain') ? -1 : THREE.MOUSE.ROTATE;  // both paint on left
   document.querySelectorAll('.tool').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
+  document.getElementById('terrRow').style.display = t === 'terrain' ? 'flex' : 'none';
 }
 document.querySelectorAll('.tool').forEach(b => b.onclick = () => setTool(b.dataset.tool));
 function setClan(k) {
@@ -564,6 +636,11 @@ function setClan(k) {
   document.querySelectorAll('.clan').forEach(b => b.classList.toggle('active', +b.dataset.clan === k));
 }
 document.querySelectorAll('.clan').forEach(b => b.onclick = () => setClan(+b.dataset.clan));
+function setTerrSign(s) {
+  terrainSign = s;
+  document.querySelectorAll('.terr').forEach(b => b.classList.toggle('active', +b.dataset.sign === s));
+}
+document.querySelectorAll('.terr').forEach(b => b.onclick = () => setTerrSign(+b.dataset.sign));
 
 const raycaster = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
@@ -582,21 +659,25 @@ function penAt(cell) {
   const i = idx(cell[0], cell[1]);
   grid[i] = paintVal; tau[i] = paintVal ? seedTau : 0;
 }
+let terrPainting = false;
 dom.addEventListener('pointerdown', e => {
   downXY = [e.clientX, e.clientY];
-  if (tool !== 'pen' || e.button !== 0) return;
+  if (e.button !== 0) return;
+  if (tool === 'terrain') { const cell = cellAt(e); if (cell) { terrainAt(cell); terrPainting = true; paint(); } return; }
+  if (tool !== 'pen') return;
   const cell = cellAt(e); if (!cell) return;
   paintVal = grid[idx(cell[0], cell[1])] ? 0 : penClan + 1;   // first cell decides draw vs erase
   penAt(cell);
   painting = true; paint(); updateStatus();
 });
 dom.addEventListener('pointermove', e => {
+  if (terrPainting) { const cell = cellAt(e); if (cell) { terrainAt(cell); paint(); } return; }
   if (!painting) return;
   const cell = cellAt(e); if (!cell) return;
   penAt(cell); paint(); updateStatus();
 });
 dom.addEventListener('pointerup', e => {
-  painting = false;
+  painting = false; terrPainting = false;
   if (tool !== 'glider' || e.button !== 0 || !downXY) { downXY = null; return; }
   const moved = Math.hypot(e.clientX - downXY[0], e.clientY - downXY[1]);
   downXY = null;
@@ -608,6 +689,7 @@ function rebuild(c, r) {
   COLS = c; ROWS = r;
   grid = new Uint8Array(COLS * ROWS);
   tau  = new Float32Array(COLS * ROWS);
+  env  = new Float32Array(COLS * ROWS);
   texData = new Uint8Array(COLS * ROWS * 4);
   tex.dispose();
   tex = new THREE.DataTexture(texData, COLS, ROWS, THREE.RGBAFormat);
@@ -638,11 +720,16 @@ function setView(twoD) {
 }
 $('view2d').onclick = () => setView(!is2D);
 $('reset').onclick  = () => setView(is2D);
+const COLOR_CYCLE = { clan: 'tau', tau: 'env', env: 'clan' };
+const COLOR_LABEL = { clan: '◧ Colour: Clan', tau: '◧ Colour: Tolerance', env: '◧ Colour: Environment' };
 $('colorby').onclick = () => {
-  colorMode = colorMode === 'clan' ? 'tau' : 'clan';
-  $('colorby').textContent = colorMode === 'clan' ? '◧ Colour: Clan' : '◧ Colour: Tolerance';
+  colorMode = COLOR_CYCLE[colorMode];
+  $('colorby').textContent = COLOR_LABEL[colorMode];
   paint();
 };
+$('envw').oninput   = e => { envWeight = +e.target.value; $('envwv').textContent = envWeight; };
+$('genTerr').onclick  = generateTerrain;
+$('flatTerr').onclick = flatTerrain;
 
 $('speed').oninput = e => { gps = +e.target.value; $('spd').textContent = gps; };
 $('dens').oninput  = e => $('densv').textContent = (+e.target.value/100).toFixed(2);
@@ -693,11 +780,12 @@ function stepPure() {   // one generation on the current globals, returns [grid,
   computeNext(ng, nt); return [ng, nt];
 }
 function selfTest() {
-  const save = { g: grid, t: tau, b: birth, s: survive, cw: Cwrap, rw: Rwrap,
-                 ms: mutSigma, rng: rng, k: kernel, rm: rangedMode };
+  const save = { g: grid, t: tau, e: env, b: birth, s: survive, cw: Cwrap, rw: Rwrap,
+                 ms: mutSigma, rng: rng, k: kernel, rm: rangedMode, ew: envWeight };
   birth = new Set([3]); survive = new Set([2,3]);
   kernel = KERNELS.moore; rangedMode = false;
   [Cwrap, Rwrap] = TOPOS.torus; mutSigma = 0; rng = Math.random;
+  env = new Float32Array(COLS*ROWS); envWeight = 4;   // flat terrain unless a test sets it
 
   // 1. τ=0 reproduces classic rivalry: warm blinker centre + one cool foe -> dies.
   grid = new Uint8Array(COLS*ROWS); tau = new Float32Array(COLS*ROWS);
@@ -736,9 +824,26 @@ function selfTest() {
   tau[idx(30,30)] = 1; let [gw1] = stepPure();// τ=1: s = 6 → in [4,8] → survives
   console.assert(gw1[idx(30,30)] === 1, 'weighted τ=1: tolerance rescues under a ranged rule');
 
-  grid = save.g; tau = save.t; birth = save.b; survive = save.s;
+  // 6. Environment bias. Back to Moore B3/S23, τ=0. A cell with 1 ally (s=1, would
+  //    die under S23) survives on fertile ground; an in-band cell dies on hostile.
+  kernel = KERNELS.moore; rangedMode = false; envWeight = 4;
+  grid = new Uint8Array(COLS*ROWS); tau = new Float32Array(COLS*ROWS); env = new Float32Array(COLS*ROWS);
+  grid[idx(40,20)] = 1; grid[idx(41,20)] = 1;                 // centre has 1 ally -> s=1
+  let [ge0] = stepPure();
+  console.assert(ge0[idx(40,20)] === 0, 'env=0: 1 neighbour (s=1) dies under S23');
+  env[idx(40,20)] = 0.5;                                       // +4*0.5 = +2 -> s=3 in S23
+  let [ge1] = stepPure();
+  console.assert(ge1[idx(40,20)] === 1, 'fertile terrain rescues a starving cell');
+  // hostile: a comfortable cell (2 allies, s=2) pushed out of band -> dies
+  grid = new Uint8Array(COLS*ROWS); tau = new Float32Array(COLS*ROWS); env = new Float32Array(COLS*ROWS);
+  grid[idx(40,20)] = 1; grid[idx(41,20)] = 1; grid[idx(39,20)] = 1;   // 2 allies -> s=2
+  env[idx(40,20)] = -0.5;                                      // -2 -> s=0 -> dies
+  let [ge2] = stepPure();
+  console.assert(ge2[idx(40,20)] === 0, 'hostile terrain kills an otherwise-surviving cell');
+
+  grid = save.g; tau = save.t; env = save.e; birth = save.b; survive = save.s;
   Cwrap = save.cw; Rwrap = save.rw; mutSigma = save.ms; rng = save.rng;
-  kernel = save.k; rangedMode = save.rm;
+  kernel = save.k; rangedMode = save.rm; envWeight = save.ew;
 }
 
 // ---- boot -------------------------------------------------------------------
