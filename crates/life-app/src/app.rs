@@ -57,6 +57,7 @@ pub struct App {
     tool: Tool,
     pen_clan: u8,      // 1 warm / 2 cool (evolve pen)
     terrain_sign: f32, // +1 fertile / -1 hostile
+    next_seed: SeedKind,
     // input
     dragging: bool,
     painting: bool,
@@ -74,6 +75,28 @@ enum Tool {
     Glider,
     Terrain,
 }
+
+/// How the next rebuild seeds the grid; consumed (reset to Soup) after use.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum SeedKind {
+    #[default]
+    Soup,
+    Hatch, // compact single-clan patch (LtL creatures die in mixed soup)
+    Empty, // blank canvas for pen/glider drawing
+}
+
+/// Evolve presets, ported from the browser's preset dropdown.
+/// (name, weighted kernel, rule, hatch)
+const PRESETS: [(&str, bool, &str, bool); 8] = [
+    ("Conway — B3/S23", false, "B3/S23", false),
+    ("HighLife — B36/S23", false, "B36/S23", false),
+    ("3-4 Life — B34/S34", false, "B34/S34", false),
+    ("Coral (dense borders)", true, "B6-14/S4-8", false),
+    ("Blobs", true, "B10-18/S12-16", false),
+    ("Hatch — lace disc", true, "B16-18/S14-26", true),
+    ("Hatch — ring", true, "B16-22/S16-28", true),
+    ("Hatch — blob", true, "B16-20/S16-28", true),
+];
 
 impl Default for App {
     fn default() -> Self {
@@ -113,6 +136,7 @@ impl Default for App {
             tool: Tool::Orbit,
             pen_clan: 1,
             terrain_sign: 1.0,
+            next_seed: SeedKind::Soup,
             dragging: false,
             painting: false,
             last_cursor: (0.0, 0.0),
@@ -156,9 +180,13 @@ impl App {
     }
 
     fn seed_grid(&mut self) -> Grid {
-        // random soup at the chosen density (both torus and stochastic modes)
+        // random soup at the chosen density (both torus and stochastic modes),
+        // or a blank canvas when Clear was pressed
         let dim = self.grid_dim;
         let mut g = Grid::new(dim, dim);
+        if self.next_seed == SeedKind::Empty {
+            return g;
+        }
         self.seed_counter = self.seed_counter.wrapping_add(1);
         let mut s = 0x5EED_u64 ^ ((self.seed_counter as u64) << 17);
         for c in g.cells.iter_mut() {
@@ -177,16 +205,37 @@ impl App {
     }
 
     fn seed_evolve(&mut self) -> EvolveState {
-        // two-clan soup at the chosen density, genes at seed values
         let dim = self.grid_dim;
         let mut st = EvolveState::new(dim, dim);
         self.seed_counter = self.seed_counter.wrapping_add(1);
         let mut s = 0x50D4_u64 ^ ((self.seed_counter as u64) << 21);
-        for i in 0..(dim * dim) as usize {
-            if xorshift(&mut s) < self.density as f64 {
-                st.grid[i] = if xorshift(&mut s) < 0.5 { 1 } else { 2 };
-                st.tau[i] = self.seed_tau;
-                st.theta[i] = 0.5;
+        match self.next_seed {
+            SeedKind::Empty => {}
+            SeedKind::Hatch => {
+                // compact single-clan patch at centre: LtL creatures grow from
+                // a lone clan (the rival would kill them in a mixed soup)
+                let c = dim / 2;
+                let r = 16u32.min(dim / 2 - 2);
+                for y in (c - r)..(c + r) {
+                    for x in (c - r)..(c + r) {
+                        if xorshift(&mut s) < 0.45 {
+                            let i = st.idx(x, y);
+                            st.grid[i] = self.pen_clan;
+                            st.tau[i] = self.seed_tau;
+                            st.theta[i] = 0.5;
+                        }
+                    }
+                }
+            }
+            SeedKind::Soup => {
+                // two-clan soup at the chosen density, genes at seed values
+                for i in 0..(dim * dim) as usize {
+                    if xorshift(&mut s) < self.density as f64 {
+                        st.grid[i] = if xorshift(&mut s) < 0.5 { 1 } else { 2 };
+                        st.tau[i] = self.seed_tau;
+                        st.theta[i] = 0.5;
+                    }
+                }
             }
         }
         st
@@ -237,6 +286,7 @@ impl App {
         }
         self.detector = CycleDetector::new(64);
         self.period = None;
+        self.next_seed = SeedKind::Soup; // one-shot; Reseed goes back to soup
     }
 
     fn render(&mut self) {
@@ -382,6 +432,9 @@ impl App {
                         if ui.button("Reset").clicked() {
                             edits.reset = true;
                         }
+                        if ui.button("Clear").clicked() {
+                            edits.clear = true;
+                        }
                     });
                     if edits.sim_mode == SimMode::Stochastic {
                         ui.separator();
@@ -403,6 +456,15 @@ impl App {
                         }
                     } else if edits.sim_mode == SimMode::Evolve {
                         ui.separator();
+                        egui::ComboBox::from_label("preset")
+                            .selected_text("Presets…")
+                            .show_ui(ui, |ui| {
+                                for (i, (name, ..)) in PRESETS.iter().enumerate() {
+                                    if ui.selectable_label(false, *name).clicked() {
+                                        edits.preset = Some(i);
+                                    }
+                                }
+                            });
                         ui.horizontal(|ui| {
                             let before = edits.kernel_weighted;
                             ui.selectable_value(&mut edits.kernel_weighted, false, "Moore");
@@ -482,7 +544,18 @@ impl App {
                 r.set_color_mode(&gpu.queue, self.color_mode);
             }
         }
-        if edits.rule_changed {
+        if let Some(i) = edits.preset {
+            // preset: kernel + rule (+ single-clan hatch patch for LtL creatures)
+            let (_, weighted, rule, hatch) = PRESETS[i];
+            self.kernel_weighted = weighted;
+            self.evolve_rule_text = rule.into();
+            self.next_seed = if hatch { SeedKind::Hatch } else { SeedKind::Soup };
+            self.rebuild_sim();
+        } else if edits.clear {
+            self.next_seed = SeedKind::Empty;
+            self.running = false; // blank canvas is for drawing — pause
+            self.rebuild_sim();
+        } else if edits.rule_changed {
             if let Ok(bs) = parse_bs(&edits.rule_text) {
                 self.rule = bs;
                 self.rebuild_sim();
@@ -626,6 +699,8 @@ struct PanelEdits {
     gen_terrain: bool,
     flat_terrain: bool,
     cycle_color: bool,
+    clear: bool,
+    preset: Option<usize>,
 }
 
 impl Default for SimMode {
