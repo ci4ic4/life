@@ -10,6 +10,29 @@ fn wrap_code(w: Wrap) -> u32 {
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Params { w: u32, h: u32, wx: u32, wy: u32, birth: u32, survive: u32, _p0: u32, _p1: u32 }
 
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct ParamsStoch {
+    w: u32, h: u32, wx: u32, wy: u32,
+    generation: u32, seed: u32, _p0: u32, _p1: u32,
+    birth: [[f32; 4]; 3],   // 9 entries used of 12 (vec4 uniform stride)
+    survive: [[f32; 4]; 3],
+}
+
+fn pack9(t: &[f32; 9]) -> [[f32; 4]; 3] {
+    let mut out = [[0.0f32; 4]; 3];
+    for (i, &v) in t.iter().enumerate() {
+        out[i / 4][i % 4] = v;
+    }
+    out
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum SimRule {
+    Deterministic(BS),
+    Stochastic { p_birth: [f32; 9], p_survive: [f32; 9], seed: u32 },
+}
+
 pub struct Sim {
     tex: [wgpu::Texture; 2],
     view: [wgpu::TextureView; 2],
@@ -17,12 +40,15 @@ pub struct Sim {
     pipeline: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
     params_buf: wgpu::Buffer,
+    rule: SimRule,
+    topo: Topology,
+    generation: u32,
     w: u32,
     h: u32,
 }
 
 impl Sim {
-    pub fn new(ctx: &GpuContext, init: &Grid, bs: BS, topo: Topology) -> Sim {
+    pub fn new(ctx: &GpuContext, init: &Grid, rule: SimRule, topo: Topology) -> Sim {
         let (w, h) = (init.w, init.h);
         let make_tex = |label| ctx.device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
@@ -52,7 +78,10 @@ impl Sim {
         ];
         let shader = ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("step"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("step.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(match rule {
+                SimRule::Deterministic(_) => include_str!("step.wgsl").into(),
+                SimRule::Stochastic { .. } => include_str!("step_stoch.wgsl").into(),
+            }),
         });
         let layout = ctx.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("step bgl"),
@@ -90,21 +119,39 @@ impl Sim {
             compilation_options: Default::default(),
             cache: None,
         });
-        let params = Params {
-            w, h,
-            wx: wrap_code(topo.x), wy: wrap_code(topo.y),
-            birth: bs.birth as u32, survive: bs.survive as u32,
-            _p0: 0, _p1: 0,
+        let (wx, wy) = (wrap_code(topo.x), wrap_code(topo.y));
+        let params_bytes: Vec<u8> = match rule {
+            SimRule::Deterministic(bs) => bytemuck::bytes_of(&Params {
+                w, h, wx, wy,
+                birth: bs.birth as u32, survive: bs.survive as u32,
+                _p0: 0, _p1: 0,
+            }).to_vec(),
+            SimRule::Stochastic { p_birth, p_survive, seed } => bytemuck::bytes_of(&ParamsStoch {
+                w, h, wx, wy,
+                generation: 0, seed, _p0: 0, _p1: 0,
+                birth: pack9(&p_birth), survive: pack9(&p_survive),
+            }).to_vec(),
         };
         let params_buf = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("params"),
-            contents: bytemuck::bytes_of(&params),
-            usage: wgpu::BufferUsages::UNIFORM,
+            contents: &params_bytes,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-        Sim { tex, view, front: 0, pipeline, layout, params_buf, w, h }
+        Sim { tex, view, front: 0, pipeline, layout, params_buf, rule, topo, generation: 0, w, h }
     }
 
     pub fn step(&mut self, ctx: &GpuContext) {
+        // stochastic draws depend on the generation counter — refresh params each step
+        if let SimRule::Stochastic { p_birth, p_survive, seed } = self.rule {
+            self.generation += 1;
+            let params = ParamsStoch {
+                w: self.w, h: self.h,
+                wx: wrap_code(self.topo.x), wy: wrap_code(self.topo.y),
+                generation: self.generation, seed, _p0: 0, _p1: 0,
+                birth: pack9(&p_birth), survive: pack9(&p_survive),
+            };
+            ctx.queue.write_buffer(&self.params_buf, 0, bytemuck::bytes_of(&params));
+        }
         let (src, dst) = (self.front, 1 - self.front);
         let bind = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("step bg"),
@@ -161,7 +208,9 @@ impl Sim {
     pub fn front_view(&self) -> &wgpu::TextureView { &self.view[self.front] }
 }
 
-/// Boot-time parity check: one GPU step must equal the CPU reference exactly.
+/// Boot-time parity check: one GPU step must equal the CPU reference exactly —
+/// directly for the deterministic rule, and at the deterministic limit (exact
+/// 0/1 probability tables) for the stochastic pipeline.
 pub fn gpu_self_test(ctx: &GpuContext) -> Result<(), String> {
     use life_core::step_deterministic;
     let (w, h) = (32u32, 32u32);
@@ -177,13 +226,28 @@ pub fn gpu_self_test(ctx: &GpuContext) -> Result<(), String> {
         *c = (state % 100 < 35) as u8;
     }
     let cpu = step_deterministic(&init, &bs, topo);
-    let mut sim = Sim::new(ctx, &init, bs, topo);
-    sim.step(ctx);
-    let gpu = sim.read_back(ctx);
-    if gpu.cells == cpu.cells {
-        Ok(())
-    } else {
-        let diff = gpu.cells.iter().zip(&cpu.cells).filter(|(a, b)| a != b).count();
-        Err(format!("gpu_self_test: {diff} cells differ from CPU reference"))
-    }
+
+    let check = |label: &str, rule: SimRule| -> Result<(), String> {
+        let mut sim = Sim::new(ctx, &init, rule, topo);
+        sim.step(ctx);
+        let gpu = sim.read_back(ctx);
+        if gpu.cells == cpu.cells {
+            Ok(())
+        } else {
+            let diff = gpu.cells.iter().zip(&cpu.cells).filter(|(a, b)| a != b).count();
+            Err(format!("gpu_self_test[{label}]: {diff} cells differ from CPU reference"))
+        }
+    };
+
+    check("deterministic", SimRule::Deterministic(bs))?;
+    // stochastic at the deterministic limit: p is exactly 1 for members, 0 otherwise,
+    // and rand01 ∈ [0,1) — so `rand < p` reproduces the digit-set rule exactly.
+    let limit_table = |mask: u16| -> [f32; 9] {
+        std::array::from_fn(|n| if mask & (1 << n) != 0 { 1.0 } else { 0.0 })
+    };
+    check("stochastic@limit", SimRule::Stochastic {
+        p_birth: limit_table(bs.birth),
+        p_survive: limit_table(bs.survive),
+        seed: 0xC0FFEE,
+    })
 }
