@@ -2,7 +2,7 @@ use crate::context::GpuContext;
 use life_core::{Grid, Topology, Wrap, BS};
 use wgpu::util::DeviceExt;
 
-fn wrap_code(w: Wrap) -> u32 {
+pub(crate) fn wrap_code(w: Wrap) -> u32 {
     match w { Wrap::Straight => 0, Wrap::None => 1, Wrap::Flip => 2 }
 }
 
@@ -249,5 +249,7 @@ pub fn gpu_self_test(ctx: &GpuContext) -> Result<(), String> {
         p_birth: limit_table(bs.birth),
         p_survive: limit_table(bs.survive),
         seed: 0xC0FFEE,
-    })
+    })?;
+    // evolve pipeline parity at mut_sigma = 0
+    crate::evolve_sim::evolve_self_test(ctx)
 }

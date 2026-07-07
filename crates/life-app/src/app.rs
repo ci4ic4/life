@@ -338,7 +338,7 @@ impl ApplicationHandler for App {
         let gpu = GpuContext::new(window.clone());
         // boot self-test: GPU step must equal CPU reference, or abort.
         match gpu_self_test(&gpu) {
-            Ok(()) => println!("gpu_self_test: OK (deterministic, stochastic@limit)"),
+            Ok(()) => println!("gpu_self_test: OK (deterministic, stochastic@limit, evolve@σ0)"),
             Err(e) => panic!("GPU self-test failed: {e}"),
         }
         let rule = self.build_rule();
