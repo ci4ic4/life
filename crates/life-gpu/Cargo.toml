@@ -7,3 +7,4 @@ life-core = { path = "../life-core" }
 wgpu.workspace = true
 bytemuck.workspace = true
 pollster.workspace = true
+winit.workspace = true
