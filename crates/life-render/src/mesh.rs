@@ -2,6 +2,12 @@
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex { pub pos: [f32; 3], pub uv: [f32; 2] }
 
+/// Torus radii shared by the mesh and the picking math.
+pub const MAJOR: f32 = 2.0;
+pub const MINOR: f32 = 0.9;
+/// Half-extent of the flat quad (see `quad()`).
+pub const QUAD_HALF: f32 = 1.5;
+
 /// Torus with `major`/`minor` radii, `nu`×`nv` segments. UV spans [0,1]² over the surface.
 pub fn torus(major: f32, minor: f32, nu: u32, nv: u32) -> (Vec<Vertex>, Vec<u32>) {
     let mut verts = Vec::new();

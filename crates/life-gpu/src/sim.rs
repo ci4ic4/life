@@ -206,6 +206,22 @@ impl Sim {
     }
 
     pub fn front_view(&self) -> &wgpu::TextureView { &self.view[self.front] }
+
+    /// Poke a single cell into the live (front) texture — pen/glider tools.
+    pub fn write_cell(&self, ctx: &GpuContext, x: u32, y: u32, v: u32) {
+        if x >= self.w || y >= self.h { return; }
+        ctx.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.tex[self.front],
+                mip_level: 0,
+                origin: wgpu::Origin3d { x, y, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytemuck::bytes_of(&v),
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4), rows_per_image: Some(1) },
+            wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        );
+    }
 }
 
 /// Boot-time parity check: one GPU step must equal the CPU reference exactly —

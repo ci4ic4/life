@@ -1,7 +1,9 @@
 //! Torus mesh, UV paint, orbit camera.
 pub mod camera;
 pub mod mesh;
+pub mod pick;
 pub use camera::OrbitCamera;
+pub use pick::pick_cell;
 
 use wgpu::util::DeviceExt;
 
@@ -118,7 +120,7 @@ impl Renderer {
             });
             (vb, ib, data.1.len() as u32)
         };
-        let torus = mk(&mesh::torus(2.0, 0.9, 96, 48));
+        let torus = mk(&mesh::torus(mesh::MAJOR, mesh::MINOR, 96, 48));
         let quad = mk(&mesh::quad());
         let depth = make_depth(device, size);
         Renderer { pipeline, bgl, vp_buf, torus, quad, bind, depth }

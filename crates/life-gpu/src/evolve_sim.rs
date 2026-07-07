@@ -258,6 +258,23 @@ impl EvolveSim {
 
     pub fn front_view(&self) -> &wgpu::TextureView { &self.view[self.front] }
     pub fn env_view(&self) -> &wgpu::TextureView { &self.env_view }
+
+    /// Poke a single cell (clan 0/1/2 + genes) into the live texture — pen/glider tools.
+    pub fn write_cell(&self, ctx: &GpuContext, x: u32, y: u32, clan: u8, tau: f32, theta: f32) {
+        if x >= self.w || y >= self.h { return; }
+        let texel = [clan as f32, tau, theta, 0.0f32];
+        ctx.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.tex[self.front],
+                mip_level: 0,
+                origin: wgpu::Origin3d { x, y, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytemuck::bytes_of(&texel),
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(16), rows_per_image: Some(1) },
+            wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        );
+    }
 }
 
 /// Evolve parity check at mut_sigma = 0: GPU step == CPU step, exact.

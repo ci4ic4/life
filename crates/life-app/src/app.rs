@@ -5,7 +5,7 @@ use life_core::{
     EvolveParams, EvolveState, Grid, Kernel, Thresholds, Topology, TrialOpts, Verdict, Wrap, BS,
 };
 use life_gpu::{gpu_self_test, EvolveSim, GpuContext, Sim, SimRule};
-use life_render::{OrbitCamera, RenderSource, Renderer, ViewMode};
+use life_render::{pick_cell, OrbitCamera, RenderSource, Renderer, ViewMode};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -53,13 +53,27 @@ pub struct App {
     color_mode: u32, // 0 clan, 1 τ, 2 θ, 3 env
     evolve_stats: String,
     gens_since_stats: u32,
+    // pointer tools
+    tool: Tool,
+    pen_clan: u8,      // 1 warm / 2 cool (evolve pen)
+    terrain_sign: f32, // +1 fertile / -1 hostile
     // input
     dragging: bool,
+    painting: bool,
     last_cursor: (f64, f64),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SimMode { Deterministic, Stochastic, Evolve }
+
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum Tool {
+    #[default]
+    Orbit,
+    Pen,
+    Glider,
+    Terrain,
+}
 
 impl Default for App {
     fn default() -> Self {
@@ -96,7 +110,11 @@ impl Default for App {
             color_mode: 0,
             evolve_stats: String::new(),
             gens_since_stats: 0,
+            tool: Tool::Orbit,
+            pen_clan: 1,
+            terrain_sign: 1.0,
             dragging: false,
+            painting: false,
             last_cursor: (0.0, 0.0),
         }
     }
@@ -299,6 +317,9 @@ impl App {
             mut_sigma: self.mut_sigma,
             seed_tau: self.seed_tau,
             kernel_weighted: self.kernel_weighted,
+            tool: self.tool,
+            pen_clan: self.pen_clan,
+            terrain_sign: self.terrain_sign,
             ..Default::default()
         };
         let evolve_stats = self.evolve_stats.clone();
@@ -321,6 +342,26 @@ impl App {
                         ui.selectable_value(&mut edits.sim_mode, SimMode::Stochastic, "Stochastic");
                         ui.selectable_value(&mut edits.sim_mode, SimMode::Evolve, "Evolve");
                     });
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut edits.tool, Tool::Orbit, "🔄 Orbit");
+                        ui.selectable_value(&mut edits.tool, Tool::Pen, "✏ Pen");
+                        ui.selectable_value(&mut edits.tool, Tool::Glider, "🚀 Glider");
+                        if edits.sim_mode == SimMode::Evolve {
+                            ui.selectable_value(&mut edits.tool, Tool::Terrain, "⛰ Terrain");
+                        }
+                    });
+                    if edits.sim_mode == SimMode::Evolve {
+                        ui.horizontal(|ui| {
+                            if matches!(edits.tool, Tool::Pen | Tool::Glider) {
+                                ui.selectable_value(&mut edits.pen_clan, 1, "Warm");
+                                ui.selectable_value(&mut edits.pen_clan, 2, "Cool");
+                            }
+                            if edits.tool == Tool::Terrain {
+                                ui.selectable_value(&mut edits.terrain_sign, 1.0, "Fertile +");
+                                ui.selectable_value(&mut edits.terrain_sign, -1.0, "Hostile −");
+                            }
+                        });
+                    }
                     ui.horizontal(|ui| {
                         ui.label("Rule");
                         if edits.sim_mode == SimMode::Evolve {
@@ -407,6 +448,13 @@ impl App {
         self.env_weight = edits.env_weight;
         self.mut_sigma = edits.mut_sigma;
         self.seed_tau = edits.seed_tau;
+        self.pen_clan = edits.pen_clan;
+        self.terrain_sign = edits.terrain_sign;
+        self.tool = if mode_changed && edits.tool == Tool::Terrain && edits.sim_mode != SimMode::Evolve {
+            Tool::Orbit // terrain pen only exists in evolve mode
+        } else {
+            edits.tool
+        };
         if edits.kernel_changed {
             self.kernel_weighted = edits.kernel_weighted;
             // swap in the kernel family's default rule
@@ -455,6 +503,60 @@ impl App {
             self.start_search();
         }
         frame.present();
+    }
+
+    /// Apply the active tool at a cursor position (physical px).
+    fn apply_tool(&mut self, cursor: (f64, f64)) {
+        let Some(gpu) = self.gpu.as_ref() else { return };
+        let (sw, sh) = (gpu.config.width as f64, gpu.config.height as f64);
+        let ndc = (
+            (2.0 * cursor.0 / sw - 1.0) as f32,
+            (1.0 - 2.0 * cursor.1 / sh) as f32,
+        );
+        let aspect = (sw / sh.max(1.0)) as f32;
+        let dims = (self.grid_dim, self.grid_dim);
+        let Some((cx, cy)) = pick_cell(&self.cam, aspect, ndc, self.mode, dims) else { return };
+        match self.tool {
+            Tool::Orbit => {}
+            Tool::Pen => match self.sim.as_ref() {
+                Some(SimKind::Binary(sim)) => sim.write_cell(gpu, cx, cy, 1),
+                Some(SimKind::Evolve(esim)) => esim.write_cell(gpu, cx, cy, self.pen_clan, self.seed_tau, 0.5),
+                None => {}
+            },
+            Tool::Glider => {
+                // standard glider, cells at the seed genes (browser stampGliderAt)
+                const GLIDER: [(u32, u32); 5] = [(1, 0), (2, 1), (0, 2), (1, 2), (2, 2)];
+                for (dc, dr) in GLIDER {
+                    let (x, y) = ((cx + dc) % dims.0, (cy + dr) % dims.1);
+                    match self.sim.as_ref() {
+                        Some(SimKind::Binary(sim)) => sim.write_cell(gpu, x, y, 1),
+                        Some(SimKind::Evolve(esim)) => esim.write_cell(gpu, x, y, self.pen_clan, self.seed_tau, 0.5),
+                        None => {}
+                    }
+                }
+            }
+            Tool::Terrain => {
+                // soft radial bump of the chosen sign, accumulate + clamp (browser terrainAt)
+                let n = (dims.0 * dims.1) as usize;
+                if self.env.len() != n { self.env = vec![0.0; n]; }
+                const R: i32 = 5;
+                let two_sig2 = 2.0 * 2.5f32 * 2.5;
+                for dr in -R..=R {
+                    for dc in -R..=R {
+                        let Some((x, y)) = life_core::resolve(cx as i32 + dc, cy as i32 + dr, dims.0, dims.1, self.topo) else { continue };
+                        let i = (y * dims.0 + x) as usize;
+                        let bump = self.terrain_sign * 0.35 * (-((dc * dc + dr * dr) as f32) / two_sig2).exp();
+                        self.env[i] = (self.env[i] + bump).clamp(-1.0, 1.0);
+                    }
+                }
+                if let Some(SimKind::Evolve(esim)) = self.sim.as_ref() {
+                    esim.upload_env(gpu, &self.env);
+                }
+            }
+        }
+        // hand-edited state invalidates any cycle history
+        self.detector = CycleDetector::new(64);
+        self.period = None;
     }
 
     fn start_search(&mut self) {
@@ -509,6 +611,10 @@ struct PanelEdits {
     density: f32,
     params_changed: bool,
     start_search: bool,
+    // tools
+    tool: Tool,
+    pen_clan: u8,
+    terrain_sign: f32,
     // evolve
     evolve_rule_text: String,
     evolve_rule_changed: bool,
@@ -561,13 +667,25 @@ impl ApplicationHandler for App {
                 self.renderer.as_mut().unwrap().resize(&gpu.device, (size.width, size.height));
             }
             WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
-                self.dragging = state == ElementState::Pressed;
+                let pressed = state == ElementState::Pressed;
+                if self.tool == Tool::Orbit {
+                    self.dragging = pressed;
+                } else {
+                    self.painting = pressed;
+                    if pressed {
+                        self.apply_tool(self.last_cursor);
+                    }
+                }
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let (dx, dy) = (position.x - self.last_cursor.0, position.y - self.last_cursor.1);
                 self.last_cursor = (position.x, position.y);
                 if self.dragging {
                     self.cam.orbit(dx as f32, dy as f32);
+                }
+                // pen/terrain drag-paint; gliders stamp on click only
+                if self.painting && matches!(self.tool, Tool::Pen | Tool::Terrain) {
+                    self.apply_tool(self.last_cursor);
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
