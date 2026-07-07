@@ -1,0 +1,15 @@
+[package]
+name = "life-app"
+edition.workspace = true
+
+[dependencies]
+life-core = { path = "../life-core" }
+life-gpu = { path = "../life-gpu" }
+life-render = { path = "../life-render" }
+winit.workspace = true
+wgpu.workspace = true
+glam.workspace = true
+pollster.workspace = true
+egui = "0.35.0"
+egui-winit = "0.35.0"
+egui-wgpu = "0.35.0"

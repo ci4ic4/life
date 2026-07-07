@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["crates/life-core", "crates/life-gpu", "crates/life-render", "crates/life-app"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+bytemuck = { version = "1", features = ["derive"] }
+glam = "0.29"
+rand = "0.8"
+wgpu = "29"
+winit = "0.30"
+pollster = "0.4"

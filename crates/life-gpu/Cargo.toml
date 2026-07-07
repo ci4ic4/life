@@ -1,0 +1,9 @@
+[package]
+name = "life-gpu"
+edition.workspace = true
+
+[dependencies]
+life-core = { path = "../life-core" }
+wgpu.workspace = true
+bytemuck.workspace = true
+pollster.workspace = true
