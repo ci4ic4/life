@@ -89,6 +89,32 @@ fn js_round(x: f32) -> f32 {
     (x + 0.5).floor()
 }
 
+/// Parse a rule string for the given kernel family: digit-set ("B3/S23") for
+/// Moore, inclusive ranges ("B14-18/S12-24", single value = degenerate range)
+/// for weighted kernels.
+pub fn parse_evolve_rule(s: &str, ranged: bool) -> Option<EvolveRule> {
+    if !ranged {
+        let bs = crate::rule::parse_bs(s).ok()?;
+        return Some(EvolveRule::DigitSet { birth: bs.birth, survive: bs.survive });
+    }
+    let s = s.trim().to_uppercase();
+    let (b, sv) = s.split_once('/')?;
+    fn range(part: &str, tag: char) -> Option<(f32, f32)> {
+        let rest = part.trim().strip_prefix(tag)?;
+        let (lo, hi) = match rest.split_once('-') {
+            Some((a, b)) => (a.trim().parse().ok()?, b.trim().parse().ok()?),
+            None => {
+                let v: f32 = rest.trim().parse().ok()?;
+                (v, v)
+            }
+        };
+        (lo <= hi && lo >= 0.0).then_some((lo, hi))
+    }
+    let (b_lo, b_hi) = range(b, 'B')?;
+    let (s_lo, s_hi) = range(sv, 'S')?;
+    Some(EvolveRule::Ranged { b_lo, b_hi, s_lo, s_hi })
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct EvolveParams {
     pub rule: EvolveRule,

@@ -8,6 +8,13 @@ use wgpu::util::DeviceExt;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ViewMode { Torus, Flat }
 
+/// What the surface paints: a binary sim's uint texture, or an evolve sim's
+/// float state + env pair (with runtime-switchable colour modes).
+pub enum RenderSource<'a> {
+    Binary(&'a wgpu::TextureView),
+    Evolve { state: &'a wgpu::TextureView, env: &'a wgpu::TextureView },
+}
+
 pub struct Renderer {
     pipeline: wgpu::RenderPipeline,
     bgl: wgpu::BindGroupLayout,
@@ -19,35 +26,57 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, sim_view: &wgpu::TextureView, size: (u32, u32)) -> Renderer {
+    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, source: RenderSource, size: (u32, u32)) -> Renderer {
+        let float_tex = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
+        let uniform_entry = wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+            count: None,
+        };
+        let (shader_src, entries): (&str, Vec<wgpu::BindGroupLayoutEntry>) = match source {
+            RenderSource::Binary(_) => (
+                include_str!("draw.wgsl"),
+                vec![
+                    uniform_entry,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Uint, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                        count: None,
+                    },
+                ],
+            ),
+            RenderSource::Evolve { .. } => (
+                include_str!("draw_evolve.wgsl"),
+                vec![uniform_entry, float_tex(1), float_tex(2)],
+            ),
+        };
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("draw"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("draw.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(shader_src.into()),
         });
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("draw bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Uint, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
-                    count: None,
-                },
-            ],
+            entries: &entries,
         });
+        // 64B view_proj + 16B (colour mode + pad); binary shader reads only the mat4
         let vp_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("vp"),
-            size: 64,
+            size: 80,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let bind = make_bind(device, &bgl, &vp_buf, sim_view);
+        let bind = make_bind(device, &bgl, &vp_buf, &source);
         let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("draw pl"),
             bind_group_layouts: &[Some(&bgl)],
@@ -99,8 +128,13 @@ impl Renderer {
         self.depth = make_depth(device, size);
     }
 
-    pub fn set_sim_view(&mut self, device: &wgpu::Device, sim_view: &wgpu::TextureView) {
-        self.bind = make_bind(device, &self.bgl, &self.vp_buf, sim_view);
+    pub fn set_source(&mut self, device: &wgpu::Device, source: RenderSource) {
+        self.bind = make_bind(device, &self.bgl, &self.vp_buf, &source);
+    }
+
+    /// Colour mode for the evolve shader: 0 clan, 1 τ, 2 θ, 3 env. No-op for binary.
+    pub fn set_color_mode(&self, queue: &wgpu::Queue, mode: u32) {
+        queue.write_buffer(&self.vp_buf, 64, bytemuck::bytes_of(&[mode, 0u32, 0, 0]));
     }
 
     pub fn draw(&self, device: &wgpu::Device, queue: &wgpu::Queue, target: &wgpu::TextureView, cam: &OrbitCamera, mode: ViewMode, aspect: f32) {
@@ -139,14 +173,21 @@ impl Renderer {
     }
 }
 
-fn make_bind(device: &wgpu::Device, bgl: &wgpu::BindGroupLayout, vp_buf: &wgpu::Buffer, sim_view: &wgpu::TextureView) -> wgpu::BindGroup {
+fn make_bind(device: &wgpu::Device, bgl: &wgpu::BindGroupLayout, vp_buf: &wgpu::Buffer, source: &RenderSource) -> wgpu::BindGroup {
+    let mut entries = vec![wgpu::BindGroupEntry { binding: 0, resource: vp_buf.as_entire_binding() }];
+    match source {
+        RenderSource::Binary(view) => {
+            entries.push(wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(view) });
+        }
+        RenderSource::Evolve { state, env } => {
+            entries.push(wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(state) });
+            entries.push(wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(env) });
+        }
+    }
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("draw bg"),
         layout: bgl,
-        entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: vp_buf.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(sim_view) },
-        ],
+        entries: &entries,
     })
 }
 

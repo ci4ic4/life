@@ -10,7 +10,7 @@ pub mod topology;
 pub mod trial;
 
 pub use detect::CycleDetector;
-pub use evolve::{gauss, step_evolve, EvolveParams, EvolveRule, EvolveState, Kernel};
+pub use evolve::{gauss, parse_evolve_rule, step_evolve, EvolveParams, EvolveRule, EvolveState, Kernel};
 pub use terrain::generate_terrain;
 pub use grid::{count_neighbors, step_deterministic, step_stochastic, Grid};
 pub use prob::{bump_max, curve, CurveParams};

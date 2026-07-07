@@ -1,18 +1,26 @@
 use std::sync::mpsc;
 use std::sync::Arc;
-use life_core::{curve, parse_bs, run_trial, CurveParams, CycleDetector, Grid, Thresholds, Topology, TrialOpts, Verdict, Wrap, BS};
-use life_gpu::{gpu_self_test, GpuContext, Sim, SimRule};
-use life_render::{OrbitCamera, Renderer, ViewMode};
+use life_core::{
+    curve, generate_terrain, parse_bs, parse_evolve_rule, run_trial, CurveParams, CycleDetector,
+    EvolveParams, EvolveState, Grid, Kernel, Thresholds, Topology, TrialOpts, Verdict, Wrap, BS,
+};
+use life_gpu::{gpu_self_test, EvolveSim, GpuContext, Sim, SimRule};
+use life_render::{OrbitCamera, RenderSource, Renderer, ViewMode};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
+enum SimKind {
+    Binary(Sim),
+    Evolve(EvolveSim),
+}
+
 pub struct App {
     window: Option<Arc<Window>>,
     gpu: Option<GpuContext>,
-    sim: Option<Sim>,
+    sim: Option<SimKind>,
     renderer: Option<Renderer>,
     egui: Option<EguiLayer>,
     cam: OrbitCamera,
@@ -35,13 +43,23 @@ pub struct App {
     // stability search (background thread)
     search_rx: Option<mpsc::Receiver<String>>,
     search_result: String,
+    // evolve mode
+    env: Vec<f32>,
+    env_weight: f32,
+    mut_sigma: f32,
+    seed_tau: f32,
+    kernel_weighted: bool,
+    evolve_rule_text: String,
+    color_mode: u32, // 0 clan, 1 τ, 2 θ, 3 env
+    evolve_stats: String,
+    gens_since_stats: u32,
     // input
     dragging: bool,
     last_cursor: (f64, f64),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum SimMode { Deterministic, Stochastic }
+enum SimMode { Deterministic, Stochastic, Evolve }
 
 impl Default for App {
     fn default() -> Self {
@@ -69,10 +87,25 @@ impl Default for App {
             seed_counter: 1,
             search_rx: None,
             search_result: String::new(),
+            env: Vec::new(),
+            env_weight: 4.0,
+            mut_sigma: 0.05,
+            seed_tau: 0.5,
+            kernel_weighted: false,
+            evolve_rule_text: "B3/S23".into(),
+            color_mode: 0,
+            evolve_stats: String::new(),
+            gens_since_stats: 0,
             dragging: false,
             last_cursor: (0.0, 0.0),
         }
     }
+}
+
+// free fn (not a method) so it can run while `self.sim` is mutably borrowed
+fn evolve_params_of(rule_text: &str, ranged: bool, env_weight: f32, mut_sigma: f32) -> Option<EvolveParams> {
+    let rule = parse_evolve_rule(rule_text, ranged)?;
+    Some(EvolveParams { rule, env_weight, mut_sigma })
 }
 
 // tiny xorshift for UI-side seeding — determinism doesn't matter here
@@ -90,7 +123,6 @@ impl App {
 
     fn build_rule(&mut self) -> SimRule {
         match self.sim_mode {
-            SimMode::Deterministic => SimRule::Deterministic(self.rule),
             SimMode::Stochastic => {
                 let prm = self.curve_params();
                 let to_f32 = |t: [f64; 9]| t.map(|v| v as f32);
@@ -101,6 +133,7 @@ impl App {
                     seed: self.seed_counter.wrapping_mul(0x9E3779B9),
                 }
             }
+            _ => SimRule::Deterministic(self.rule),
         }
     }
 
@@ -108,13 +141,6 @@ impl App {
         let dim = self.grid_dim;
         let mut g = Grid::new(dim, dim);
         match self.sim_mode {
-            SimMode::Deterministic => {
-                // centre a blinker so the first frame visibly animates
-                let c = dim / 2;
-                g.set(c, c - 1, 1);
-                g.set(c, c, 1);
-                g.set(c, c + 1, 1);
-            }
             SimMode::Stochastic => {
                 // random soup at the chosen density
                 let mut s = 0x5EED_u64 ^ ((self.seed_counter as u64) << 17);
@@ -122,19 +148,85 @@ impl App {
                     *c = (xorshift(&mut s) < self.density as f64) as u8;
                 }
             }
+            _ => {
+                // centre a blinker so the first frame visibly animates
+                let c = dim / 2;
+                g.set(c, c - 1, 1);
+                g.set(c, c, 1);
+                g.set(c, c + 1, 1);
+            }
         }
         g
     }
 
-    fn rebuild_sim(&mut self) {
-        let rule = self.build_rule();
-        let grid = self.seed_grid();
-        let gpu = self.gpu.as_ref().unwrap();
-        let sim = Sim::new(gpu, &grid, rule, self.topo);
-        if let Some(r) = self.renderer.as_mut() {
-            r.set_sim_view(&gpu.device, sim.front_view());
+    fn kernel(&self) -> Kernel {
+        if self.kernel_weighted { Kernel::weighted5x5() } else { Kernel::moore() }
+    }
+
+    fn evolve_params(&self) -> Option<EvolveParams> {
+        let rule = parse_evolve_rule(&self.evolve_rule_text, self.kernel_weighted)?;
+        Some(EvolveParams { rule, env_weight: self.env_weight, mut_sigma: self.mut_sigma })
+    }
+
+    fn seed_evolve(&mut self) -> EvolveState {
+        // two-clan soup at the chosen density, genes at seed values
+        let dim = self.grid_dim;
+        let mut st = EvolveState::new(dim, dim);
+        self.seed_counter = self.seed_counter.wrapping_add(1);
+        let mut s = 0x50D4_u64 ^ ((self.seed_counter as u64) << 21);
+        for i in 0..(dim * dim) as usize {
+            if xorshift(&mut s) < self.density as f64 {
+                st.grid[i] = if xorshift(&mut s) < 0.5 { 1 } else { 2 };
+                st.tau[i] = self.seed_tau;
+                st.theta[i] = 0.5;
+            }
         }
-        self.sim = Some(sim);
+        st
+    }
+
+    /// Rebuild sim + renderer for the current mode (renderer pipeline differs
+    /// per source kind, so it is recreated rather than rebound).
+    fn rebuild_sim(&mut self) {
+        let gpu_size = {
+            let gpu = self.gpu.as_ref().unwrap();
+            (gpu.config.width, gpu.config.height)
+        };
+        match self.sim_mode {
+            SimMode::Evolve => {
+                let Some(params) = self.evolve_params() else { return }; // bad rule text: keep old sim
+                if self.env.len() != (self.grid_dim * self.grid_dim) as usize {
+                    self.env = vec![0.0; (self.grid_dim * self.grid_dim) as usize];
+                }
+                let init = self.seed_evolve();
+                let kernel = self.kernel();
+                self.seed_counter = self.seed_counter.wrapping_add(1);
+                let gpu = self.gpu.as_ref().unwrap();
+                let esim = EvolveSim::new(gpu, &init, &self.env, kernel, params, self.topo, self.seed_counter.wrapping_mul(0x9E3779B9));
+                let renderer = Renderer::new(
+                    &gpu.device, gpu.config.format,
+                    RenderSource::Evolve { state: esim.front_view(), env: esim.env_view() },
+                    gpu_size,
+                );
+                renderer.set_color_mode(&gpu.queue, self.color_mode);
+                self.sim = Some(SimKind::Evolve(esim));
+                self.renderer = Some(renderer);
+                self.evolve_stats.clear();
+                self.gens_since_stats = 0;
+            }
+            _ => {
+                let rule = self.build_rule();
+                let grid = self.seed_grid();
+                let gpu = self.gpu.as_ref().unwrap();
+                let sim = Sim::new(gpu, &grid, rule, self.topo);
+                let renderer = Renderer::new(
+                    &gpu.device, gpu.config.format,
+                    RenderSource::Binary(sim.front_view()),
+                    gpu_size,
+                );
+                self.sim = Some(SimKind::Binary(sim));
+                self.renderer = Some(renderer);
+            }
+        }
         self.detector = CycleDetector::new(64);
         self.period = None;
     }
@@ -143,16 +235,46 @@ impl App {
         // advance simulation
         if self.running || self.step_once {
             let gpu = self.gpu.as_ref().unwrap();
-            let sim = self.sim.as_mut().unwrap();
-            sim.step(gpu);
-            self.renderer.as_mut().unwrap().set_sim_view(&gpu.device, sim.front_view());
-            // per-gen readback for cycle detection, as in the browser life-torus.
-            // ponytail: sync readback every gen; throttle if it stutters at 2048².
-            // stochastic runs never cycle — skip the readback entirely there.
-            if self.sim_mode == SimMode::Deterministic {
-                let g = sim.read_back(gpu);
-                if let Some(p) = self.detector.observe(&g) {
-                    self.period = Some(p);
+            match self.sim.as_mut().unwrap() {
+                SimKind::Binary(sim) => {
+                    sim.step(gpu);
+                    self.renderer.as_mut().unwrap().set_source(&gpu.device, RenderSource::Binary(sim.front_view()));
+                    // per-gen readback for cycle detection, as in the browser life-torus.
+                    // ponytail: sync readback every gen; throttle if it stutters at 2048².
+                    // stochastic runs never cycle — skip the readback entirely there.
+                    if self.sim_mode == SimMode::Deterministic {
+                        let g = sim.read_back(gpu);
+                        if let Some(p) = self.detector.observe(&g) {
+                            self.period = Some(p);
+                        }
+                    }
+                }
+                SimKind::Evolve(esim) => {
+                    esim.step(gpu);
+                    self.renderer.as_mut().unwrap().set_source(
+                        &gpu.device,
+                        RenderSource::Evolve { state: esim.front_view(), env: esim.env_view() },
+                    );
+                    // throttled gene-stats readback (every 8 gens, browser-style)
+                    self.gens_since_stats += 1;
+                    if self.gens_since_stats >= 8 {
+                        self.gens_since_stats = 0;
+                        let st = esim.read_back(gpu);
+                        let (mut n0, mut n1) = (0u32, 0u32);
+                        let (mut t0, mut t1, mut h0, mut h1) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+                        for i in 0..st.grid.len() {
+                            match st.grid[i] {
+                                1 => { n0 += 1; t0 += st.tau[i] as f64; h0 += st.theta[i] as f64; }
+                                2 => { n1 += 1; t1 += st.tau[i] as f64; h1 += st.theta[i] as f64; }
+                                _ => {}
+                            }
+                        }
+                        let m = |s: f64, n: u32| if n > 0 { s / n as f64 } else { 0.0 };
+                        self.evolve_stats = format!(
+                            "warm {n0} τ̄{:.2} θ̄{:.2} · cool {n1} τ̄{:.2} θ̄{:.2}",
+                            m(t0, n0), m(h0, n0), m(t1, n1), m(h1, n1),
+                        );
+                    }
                 }
             }
             self.step_once = false;
@@ -182,8 +304,15 @@ impl App {
             floor: self.floor,
             ceil: self.ceil,
             density: self.density,
+            evolve_rule_text: self.evolve_rule_text.clone(),
+            env_weight: self.env_weight,
+            mut_sigma: self.mut_sigma,
+            seed_tau: self.seed_tau,
+            kernel_weighted: self.kernel_weighted,
             ..Default::default()
         };
+        let evolve_stats = self.evolve_stats.clone();
+        let color_mode = self.color_mode;
         let running = self.running;
         let period = self.period;
         let searching = self.search_rx.is_some();
@@ -200,10 +329,15 @@ impl App {
                     ui.horizontal(|ui| {
                         ui.selectable_value(&mut edits.sim_mode, SimMode::Deterministic, "Torus");
                         ui.selectable_value(&mut edits.sim_mode, SimMode::Stochastic, "Stochastic");
+                        ui.selectable_value(&mut edits.sim_mode, SimMode::Evolve, "Evolve");
                     });
                     ui.horizontal(|ui| {
                         ui.label("Rule");
-                        if ui.text_edit_singleline(&mut edits.rule_text).lost_focus() {
+                        if edits.sim_mode == SimMode::Evolve {
+                            if ui.text_edit_singleline(&mut edits.evolve_rule_text).lost_focus() {
+                                edits.evolve_rule_changed = true;
+                            }
+                        } else if ui.text_edit_singleline(&mut edits.rule_text).lost_focus() {
                             edits.rule_changed = true;
                         }
                     });
@@ -236,6 +370,26 @@ impl App {
                         if !search_result.is_empty() {
                             ui.label(&search_result);
                         }
+                    } else if edits.sim_mode == SimMode::Evolve {
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            let before = edits.kernel_weighted;
+                            ui.selectable_value(&mut edits.kernel_weighted, false, "Moore");
+                            ui.selectable_value(&mut edits.kernel_weighted, true, "5×5 weighted");
+                            edits.kernel_changed = before != edits.kernel_weighted;
+                        });
+                        edits.params_changed |= ui.add(egui::Slider::new(&mut edits.env_weight, 0.0..=8.0).text("env weight")).drag_stopped();
+                        edits.params_changed |= ui.add(egui::Slider::new(&mut edits.mut_sigma, 0.0..=0.3).text("σ mut")).drag_stopped();
+                        ui.add(egui::Slider::new(&mut edits.seed_tau, 0.0..=1.0).text("seed τ"));
+                        ui.add(egui::Slider::new(&mut edits.density, 0.0..=1.0).text("density"));
+                        ui.horizontal(|ui| {
+                            if ui.button("Reseed").clicked() { edits.reset = true; }
+                            if ui.button("Terrain").clicked() { edits.gen_terrain = true; }
+                            if ui.button("Flat").clicked() { edits.flat_terrain = true; }
+                            let label = ["◧ Clan", "◧ τ", "◧ θ", "◧ Env"][color_mode as usize];
+                            if ui.button(label).clicked() { edits.cycle_color = true; }
+                        });
+                        if !evolve_stats.is_empty() { ui.label(&evolve_stats); }
                     } else {
                         ui.label(match period {
                             Some(1) => "still life".to_string(),
@@ -256,13 +410,52 @@ impl App {
         self.floor = edits.floor;
         self.ceil = edits.ceil;
         self.density = edits.density;
+        self.env_weight = edits.env_weight;
+        self.mut_sigma = edits.mut_sigma;
+        self.seed_tau = edits.seed_tau;
+        if edits.kernel_changed {
+            self.kernel_weighted = edits.kernel_weighted;
+            // swap in the kernel family's default rule
+            self.evolve_rule_text =
+                if self.kernel_weighted { "B14-18/S12-24".into() } else { "B3/S23".into() };
+        }
+        self.evolve_rule_text = if edits.evolve_rule_changed { edits.evolve_rule_text.clone() } else { self.evolve_rule_text.clone() };
+        if edits.gen_terrain || edits.flat_terrain {
+            let n = (self.grid_dim * self.grid_dim) as usize;
+            if edits.flat_terrain {
+                self.env = vec![0.0; n];
+            } else {
+                self.seed_counter = self.seed_counter.wrapping_add(1);
+                let mut s = 0x7E44_u64 ^ ((self.seed_counter as u64) << 13);
+                let mut rng = move || xorshift(&mut s);
+                self.env = generate_terrain(self.grid_dim, self.grid_dim, &mut rng);
+            }
+            if let (Some(SimKind::Evolve(esim)), Some(gpu)) = (self.sim.as_ref(), self.gpu.as_ref()) {
+                esim.upload_env(gpu, &self.env);
+            }
+        }
+        if edits.cycle_color {
+            self.color_mode = (self.color_mode + 1) % 4;
+            if let (Some(r), Some(gpu)) = (self.renderer.as_ref(), self.gpu.as_ref()) {
+                r.set_color_mode(&gpu.queue, self.color_mode);
+            }
+        }
         if edits.rule_changed {
             if let Ok(bs) = parse_bs(&edits.rule_text) {
                 self.rule = bs;
                 self.rebuild_sim();
             }
-        } else if edits.reset || mode_changed || edits.params_changed {
+        } else if edits.evolve_rule_changed || edits.kernel_changed || edits.reset || mode_changed
+            || (edits.params_changed && self.sim_mode != SimMode::Evolve)
+        {
             self.rebuild_sim();
+        } else if edits.params_changed {
+            // evolve env_weight / σ_mut are live-tunable without reseeding
+            if let Some(SimKind::Evolve(esim)) = self.sim.as_mut() {
+                if let Some(p) = evolve_params_of(&self.evolve_rule_text, self.kernel_weighted, self.env_weight, self.mut_sigma) {
+                    esim.set_params(p);
+                }
+            }
         }
         if edits.start_search {
             self.start_search();
@@ -322,6 +515,17 @@ struct PanelEdits {
     density: f32,
     params_changed: bool,
     start_search: bool,
+    // evolve
+    evolve_rule_text: String,
+    evolve_rule_changed: bool,
+    env_weight: f32,
+    mut_sigma: f32,
+    seed_tau: f32,
+    kernel_weighted: bool,
+    kernel_changed: bool,
+    gen_terrain: bool,
+    flat_terrain: bool,
+    cycle_color: bool,
 }
 
 impl Default for SimMode {
@@ -341,16 +545,10 @@ impl ApplicationHandler for App {
             Ok(()) => println!("gpu_self_test: OK (deterministic, stochastic@limit, evolve@σ0)"),
             Err(e) => panic!("GPU self-test failed: {e}"),
         }
-        let rule = self.build_rule();
-        let grid = self.seed_grid();
-        let sim = Sim::new(&gpu, &grid, rule, self.topo);
-        let size = (gpu.config.width, gpu.config.height);
-        let renderer = Renderer::new(&gpu.device, gpu.config.format, sim.front_view(), size);
         self.egui = Some(EguiLayer::new(&gpu.device, gpu.config.format, &window));
-        self.sim = Some(sim);
-        self.renderer = Some(renderer);
         self.gpu = Some(gpu);
         self.window = Some(window);
+        self.rebuild_sim(); // builds sim + renderer for the current mode
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
