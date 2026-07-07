@@ -137,24 +137,14 @@ impl App {
         }
     }
 
-    fn seed_grid(&self) -> Grid {
+    fn seed_grid(&mut self) -> Grid {
+        // random soup at the chosen density (both torus and stochastic modes)
         let dim = self.grid_dim;
         let mut g = Grid::new(dim, dim);
-        match self.sim_mode {
-            SimMode::Stochastic => {
-                // random soup at the chosen density
-                let mut s = 0x5EED_u64 ^ ((self.seed_counter as u64) << 17);
-                for c in g.cells.iter_mut() {
-                    *c = (xorshift(&mut s) < self.density as f64) as u8;
-                }
-            }
-            _ => {
-                // centre a blinker so the first frame visibly animates
-                let c = dim / 2;
-                g.set(c, c - 1, 1);
-                g.set(c, c, 1);
-                g.set(c, c + 1, 1);
-            }
+        self.seed_counter = self.seed_counter.wrapping_add(1);
+        let mut s = 0x5EED_u64 ^ ((self.seed_counter as u64) << 17);
+        for c in g.cells.iter_mut() {
+            *c = (xorshift(&mut s) < self.density as f64) as u8;
         }
         g
     }
@@ -391,6 +381,10 @@ impl App {
                         });
                         if !evolve_stats.is_empty() { ui.label(&evolve_stats); }
                     } else {
+                        ui.add(egui::Slider::new(&mut edits.density, 0.0..=1.0).text("density"));
+                        if ui.button("Reseed").clicked() {
+                            edits.reset = true;
+                        }
                         ui.label(match period {
                             Some(1) => "still life".to_string(),
                             Some(p) => format!("cycle: period {p}"),
