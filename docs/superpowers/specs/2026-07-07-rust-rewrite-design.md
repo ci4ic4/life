@@ -74,11 +74,11 @@ Depends on `life-core` for the CPU reference used by a boot-time `gpu_self_test(
 
 ### `life-render`
 
-Torus mesh with UV mapping (the state texture painted onto the torus each frame), a hand-rolled orbit camera (spherical coordinates — there is no drop-in `OrbitControls` equivalent), and the 2D/3D view toggle. Consumes a texture from `life-gpu`; contains no simulation logic.
+Torus mesh with UV mapping (the state texture painted onto the torus each frame), a **hand-rolled orbit camera** (spherical coordinates: yaw/pitch/radius from pointer drag + scroll; no camera-crate dependency), and the 2D/3D view toggle. Consumes a texture from `life-gpu`; contains no simulation logic.
 
 ### `life-app`
 
-The binary. winit event loop, egui control panels, pointer tools (orbit camera / pen paint / drop glider), and preset loading. Wires the other three crates together. The three sims ship as modes within one app (or three thin binaries sharing library code) — decided during Slice A.
+The binary. winit event loop, egui control panels, pointer tools (orbit camera / pen paint / drop glider), and preset loading. Wires the other three crates together. **The three sims ship as modes within one binary** — a `Mode { Torus, Stochastic, Evolve }` selector in the egui panel switches the active `Rule`, shader set, and controls at runtime. One window, one build, no per-sim binaries.
 
 ## Data flow (per frame)
 
