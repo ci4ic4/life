@@ -38,6 +38,26 @@ pub fn step_deterministic(g: &Grid, bs: &BS, t: Topology) -> Grid {
     out
 }
 
+/// One stochastic generation: cell becomes alive iff rng() < p[n] (strict),
+/// with p from the birth table for dead cells, survive table for live ones.
+pub fn step_stochastic(
+    g: &Grid,
+    p_birth: &[f64; 9],
+    p_survive: &[f64; 9],
+    t: Topology,
+    rng: &mut impl FnMut() -> f64,
+) -> Grid {
+    let mut out = Grid::new(g.w, g.h);
+    for y in 0..g.h {
+        for x in 0..g.w {
+            let n = count_neighbors(g, x, y, t) as usize;
+            let p = if g.get(x, y) == 1 { p_survive[n] } else { p_birth[n] };
+            out.set(x, y, (rng() < p) as u8);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,6 +91,19 @@ mod tests {
         let g2 = step_deterministic(&g1, &bs, TORUS);
         assert_eq!(g2, blinker());
     }
+    #[test]
+    fn stochastic_isolated_cell_dies_under_b3s23_tables() {
+        use crate::prob::{curve, CurveParams};
+        let mut g = Grid::new(5, 5);
+        g.set(2, 2, 1); // center, no neighbors
+        let prm = CurveParams { sigma: 0.6, ceil: 1.0, floor: 0.0 };
+        let p_birth = curve(1 << 3, prm);
+        let p_survive = curve((1 << 2) | (1 << 3), prm);
+        let next = step_stochastic(&g, &p_birth, &p_survive, TORUS, &mut || 0.5);
+        // survive prob at n=0 is ~0; rng()=0.5 must not pass
+        assert_eq!(next.get(2, 2), 0);
+    }
+
     #[test]
     fn hard_edge_kills_wrap_neighbors() {
         let t = Topology { x: Wrap::None, y: Wrap::None };
