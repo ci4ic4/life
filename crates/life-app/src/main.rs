@@ -18,7 +18,13 @@ impl ApplicationHandler for App {
                 .create_window(Window::default_attributes().with_title("life — torus"))
                 .unwrap(),
         );
-        self.gpu = Some(GpuContext::new(window.clone()));
+        let gpu = GpuContext::new(window.clone());
+        // boot self-test: GPU step must equal CPU reference, or abort.
+        match life_gpu::gpu_self_test(&gpu) {
+            Ok(()) => println!("gpu_self_test: OK"),
+            Err(e) => panic!("GPU self-test failed: {e}"),
+        }
+        self.gpu = Some(gpu);
         self.window = Some(window);
     }
 
