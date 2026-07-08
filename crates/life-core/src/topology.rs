@@ -1,7 +1,12 @@
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Wrap { Straight, None, Flip }
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Wrap {
+    #[default]
+    Straight,
+    None,
+    Flip,
+}
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Topology { pub x: Wrap, pub y: Wrap }
 
 /// Resolve a possibly out-of-bounds coordinate against the grid topology.

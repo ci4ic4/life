@@ -370,6 +370,8 @@ impl App {
             tool: self.tool,
             pen_clan: self.pen_clan,
             terrain_sign: self.terrain_sign,
+            grid_dim: self.grid_dim,
+            topo: self.topo,
             ..Default::default()
         };
         let evolve_stats = self.evolve_stats.clone();
@@ -434,6 +436,40 @@ impl App {
                         }
                         if ui.button("Clear").clicked() {
                             edits.clear = true;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Size");
+                        egui::ComboBox::from_id_salt("grid_dim")
+                            .selected_text(format!("{0}×{0}", edits.grid_dim))
+                            .show_ui(ui, |ui| {
+                                for &n in &[64u32, 128, 256, 512, 1024, 2048] {
+                                    if ui.selectable_value(&mut edits.grid_dim, n, format!("{n}×{n}")).clicked() {
+                                        edits.grid_dim_changed = true;
+                                    }
+                                }
+                            });
+                    });
+                    ui.horizontal(|ui| {
+                        let wrap_name = |w: Wrap| match w {
+                            Wrap::Straight => "wrap",
+                            Wrap::None => "edge",
+                            Wrap::Flip => "flip",
+                        };
+                        for (label, axis, id) in [
+                            ("X", &mut edits.topo.x, "wrap_x"),
+                            ("Y", &mut edits.topo.y, "wrap_y"),
+                        ] {
+                            ui.label(label);
+                            egui::ComboBox::from_id_salt(id)
+                                .selected_text(wrap_name(*axis))
+                                .show_ui(ui, |ui| {
+                                    for w in [Wrap::Straight, Wrap::None, Wrap::Flip] {
+                                        if ui.selectable_value(axis, w, wrap_name(w)).clicked() {
+                                            edits.topo_changed = true;
+                                        }
+                                    }
+                                });
                         }
                     });
                     if edits.sim_mode == SimMode::Stochastic {
@@ -544,7 +580,16 @@ impl App {
                 r.set_color_mode(&gpu.queue, self.color_mode);
             }
         }
-        if let Some(i) = edits.preset {
+        if edits.topo_changed {
+            self.topo = edits.topo;
+        }
+        if edits.grid_dim_changed {
+            self.grid_dim = edits.grid_dim;
+            self.env = Vec::new(); // force realloc at new size in rebuild_sim
+            self.rebuild_sim();
+        } else if edits.topo_changed {
+            self.rebuild_sim();
+        } else if let Some(i) = edits.preset {
             // preset: kernel + rule (+ single-clan hatch patch for LtL creatures)
             let (_, weighted, rule, hatch) = PRESETS[i];
             self.kernel_weighted = weighted;
@@ -684,6 +729,10 @@ struct PanelEdits {
     density: f32,
     params_changed: bool,
     start_search: bool,
+    grid_dim: u32,
+    grid_dim_changed: bool,
+    topo: Topology,
+    topo_changed: bool,
     // tools
     tool: Tool,
     pen_clan: u8,
