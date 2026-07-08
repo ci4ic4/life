@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::mpsc;
 use std::sync::Arc;
+use std::time::Instant;
 use life_core::{
     curve, generate_terrain, parse_bs, parse_evolve_rule, run_trial, CurveParams, CycleDetector,
     EvolveParams, EvolveState, Grid, Kernel, Thresholds, Topology, TrialOpts, Verdict, Wrap, BS,
@@ -28,6 +29,9 @@ pub struct App {
     mode: ViewMode,
     running: bool,
     step_once: bool,
+    target_gps: f32,        // target generations per second
+    step_accum: f32,        // fractional gens owed, carried between frames
+    last_frame: Option<Instant>,
     rule: BS,
     rule_text: String,
     topo: Topology,
@@ -112,6 +116,9 @@ impl Default for App {
             mode: ViewMode::Torus,
             running: false,
             step_once: false,
+            target_gps: 12.0,
+            step_accum: 0.0,
+            last_frame: None,
             rule: parse_bs("B3/S23").unwrap(),
             rule_text: "B3/S23".into(),
             topo: Topology { x: Wrap::Straight, y: Wrap::Straight },
@@ -293,9 +300,31 @@ impl App {
         self.next_seed = SeedKind::Soup; // one-shot; Reseed goes back to soup
     }
 
-    fn render(&mut self) {
-        // advance simulation
-        if self.running || self.step_once {
+    /// Steps to run this frame: manual Step = exactly 1; running = however many
+    /// the real-time accumulator owes at `target_gps`, capped so a stall can't
+    /// spiral into a catch-up burst; paused = 0.
+    fn steps_this_frame(&mut self) -> u32 {
+        if self.step_once {
+            self.step_once = false;
+            self.last_frame = None; // manual step: don't credit stalled wall-time
+            return 1;
+        }
+        if !self.running {
+            self.last_frame = None;
+            self.step_accum = 0.0;
+            return 0;
+        }
+        let now = Instant::now();
+        let dt = self.last_frame.replace(now).map_or(0.0, |t| (now - t).as_secs_f32());
+        self.step_accum += dt * self.target_gps;
+        let n = self.step_accum.floor().min(16.0);
+        self.step_accum -= n;
+        n as u32
+    }
+
+    /// Advance the sim one generation and refresh the render source + readbacks.
+    fn advance_once(&mut self) {
+        {
             let gpu = self.gpu.as_ref().unwrap();
             match self.sim.as_mut().unwrap() {
                 SimKind::Binary(sim) => {
@@ -341,7 +370,13 @@ impl App {
                     }
                 }
             }
-            self.step_once = false;
+        }
+    }
+
+    fn render(&mut self) {
+        // advance simulation — real-time throttle to target_gps
+        for _ in 0..self.steps_this_frame() {
+            self.advance_once();
         }
         let gpu = self.gpu.as_ref().unwrap();
         let frame = match gpu.surface.get_current_texture() {
@@ -378,6 +413,7 @@ impl App {
             terrain_sign: self.terrain_sign,
             grid_dim: self.grid_dim,
             topo: self.topo,
+            target_gps: self.target_gps,
             ..Default::default()
         };
         let evolve_stats = self.evolve_stats.clone();
@@ -445,6 +481,7 @@ impl App {
                             edits.clear = true;
                         }
                     });
+                    ui.add(egui::Slider::new(&mut edits.target_gps, 0.5..=120.0).logarithmic(true).text("gens/s"));
                     ui.horizontal(|ui| {
                         ui.label("Size");
                         egui::ComboBox::from_id_salt("grid_dim")
@@ -581,6 +618,7 @@ impl App {
         self.seed_tau = edits.seed_tau;
         self.pen_clan = edits.pen_clan;
         self.terrain_sign = edits.terrain_sign;
+        self.target_gps = edits.target_gps;
         self.tool = if mode_changed && edits.tool == Tool::Terrain && edits.sim_mode != SimMode::Evolve {
             Tool::Orbit // terrain pen only exists in evolve mode
         } else {
@@ -766,6 +804,7 @@ struct PanelEdits {
     grid_dim_changed: bool,
     topo: Topology,
     topo_changed: bool,
+    target_gps: f32,
     // tools
     tool: Tool,
     pen_clan: u8,
