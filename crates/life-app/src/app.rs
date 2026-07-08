@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::mpsc;
 use std::sync::Arc;
 use life_core::{
@@ -53,6 +54,7 @@ pub struct App {
     color_mode: u32, // 0 clan, 1 τ, 2 θ, 3 env
     evolve_stats: String,
     gens_since_stats: u32,
+    tau_history: VecDeque<(f32, f32)>, // (warm τ̄, cool τ̄), newest at back
     // pointer tools
     tool: Tool,
     pen_clan: u8,      // 1 warm / 2 cool (evolve pen)
@@ -133,6 +135,7 @@ impl Default for App {
             color_mode: 0,
             evolve_stats: String::new(),
             gens_since_stats: 0,
+            tau_history: VecDeque::new(),
             tool: Tool::Orbit,
             pen_clan: 1,
             terrain_sign: 1.0,
@@ -269,6 +272,7 @@ impl App {
                 self.renderer = Some(renderer);
                 self.evolve_stats.clear();
                 self.gens_since_stats = 0;
+                self.tau_history.clear();
             }
             _ => {
                 let rule = self.build_rule();
@@ -332,6 +336,8 @@ impl App {
                             "warm {n0} τ̄{:.2} θ̄{:.2} · cool {n1} τ̄{:.2} θ̄{:.2}",
                             m(t0, n0), m(h0, n0), m(t1, n1), m(h1, n1),
                         );
+                        self.tau_history.push_back((m(t0, n0) as f32, m(t1, n1) as f32));
+                        if self.tau_history.len() > 120 { self.tau_history.pop_front(); }
                     }
                 }
             }
@@ -375,6 +381,7 @@ impl App {
             ..Default::default()
         };
         let evolve_stats = self.evolve_stats.clone();
+        let tau_history = self.tau_history.clone();
         let color_mode = self.color_mode;
         let running = self.running;
         let period = self.period;
@@ -519,6 +526,32 @@ impl App {
                             if ui.button(label).clicked() { edits.cycle_color = true; }
                         });
                         if !evolve_stats.is_empty() { ui.label(&evolve_stats); }
+                        if tau_history.len() > 1 {
+                            // strip-chart of mean τ per clan over time, y∈[0,1]
+                            ui.label("τ̄ history");
+                            let (rect, _) = ui.allocate_exact_size(
+                                egui::vec2(ui.available_width().min(260.0), 48.0),
+                                egui::Sense::hover(),
+                            );
+                            let p = ui.painter_at(rect);
+                            p.rect_filled(rect, 2.0, egui::Color32::from_gray(20));
+                            let n = tau_history.len();
+                            let xy = |i: usize, tau: f32| {
+                                egui::pos2(
+                                    rect.left() + rect.width() * i as f32 / (n - 1) as f32,
+                                    rect.bottom() - rect.height() * tau.clamp(0.0, 1.0),
+                                )
+                            };
+                            for (col, pick) in [
+                                (egui::Color32::from_rgb(230, 120, 80), 0usize), // warm
+                                (egui::Color32::from_rgb(90, 150, 230), 1usize), // cool
+                            ] {
+                                let pts: Vec<_> = tau_history.iter().enumerate()
+                                    .map(|(i, s)| xy(i, if pick == 0 { s.0 } else { s.1 }))
+                                    .collect();
+                                p.add(egui::Shape::line(pts, egui::Stroke::new(1.5, col)));
+                            }
+                        }
                     } else {
                         ui.add(egui::Slider::new(&mut edits.density, 0.0..=1.0).text("density"));
                         if ui.button("Reseed").clicked() {
