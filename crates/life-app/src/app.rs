@@ -35,7 +35,8 @@ pub struct App {
     rule: BS,
     rule_text: String,
     topo: Topology,
-    grid_dim: u32,
+    grid_w: u32,
+    grid_h: u32,
     detector: CycleDetector,
     period: Option<u64>,
     // stochastic mode
@@ -122,7 +123,8 @@ impl Default for App {
             rule: parse_bs("B3/S23").unwrap(),
             rule_text: "B3/S23".into(),
             topo: Topology { x: Wrap::Straight, y: Wrap::Straight },
-            grid_dim: 128,
+            grid_w: 128,
+            grid_h: 128,
             detector: CycleDetector::new(64),
             period: None,
             sim_mode: SimMode::Deterministic,
@@ -192,8 +194,7 @@ impl App {
     fn seed_grid(&mut self) -> Grid {
         // random soup at the chosen density (both torus and stochastic modes),
         // or a blank canvas when Clear was pressed
-        let dim = self.grid_dim;
-        let mut g = Grid::new(dim, dim);
+        let mut g = Grid::new(self.grid_w, self.grid_h);
         if self.next_seed == SeedKind::Empty {
             return g;
         }
@@ -215,8 +216,8 @@ impl App {
     }
 
     fn seed_evolve(&mut self) -> EvolveState {
-        let dim = self.grid_dim;
-        let mut st = EvolveState::new(dim, dim);
+        let (w, h) = (self.grid_w, self.grid_h);
+        let mut st = EvolveState::new(w, h);
         self.seed_counter = self.seed_counter.wrapping_add(1);
         let mut s = 0x50D4_u64 ^ ((self.seed_counter as u64) << 21);
         match self.next_seed {
@@ -224,10 +225,10 @@ impl App {
             SeedKind::Hatch => {
                 // compact single-clan patch at centre: LtL creatures grow from
                 // a lone clan (the rival would kill them in a mixed soup)
-                let c = dim / 2;
-                let r = 16u32.min(dim / 2 - 2);
-                for y in (c - r)..(c + r) {
-                    for x in (c - r)..(c + r) {
+                let (cx, cy) = (w / 2, h / 2);
+                let r = 16u32.min(w.min(h) / 2 - 2);
+                for y in (cy - r)..(cy + r) {
+                    for x in (cx - r)..(cx + r) {
                         if xorshift(&mut s) < 0.45 {
                             let i = st.idx(x, y);
                             st.grid[i] = self.pen_clan;
@@ -239,7 +240,7 @@ impl App {
             }
             SeedKind::Soup => {
                 // two-clan soup at the chosen density, genes at seed values
-                for i in 0..(dim * dim) as usize {
+                for i in 0..(w * h) as usize {
                     if xorshift(&mut s) < self.density as f64 {
                         st.grid[i] = if xorshift(&mut s) < 0.5 { 1 } else { 2 };
                         st.tau[i] = self.seed_tau;
@@ -261,8 +262,8 @@ impl App {
         match self.sim_mode {
             SimMode::Evolve => {
                 let Some(params) = self.evolve_params() else { return }; // bad rule text: keep old sim
-                if self.env.len() != (self.grid_dim * self.grid_dim) as usize {
-                    self.env = vec![0.0; (self.grid_dim * self.grid_dim) as usize];
+                if self.env.len() != (self.grid_w * self.grid_h) as usize {
+                    self.env = vec![0.0; (self.grid_w * self.grid_h) as usize];
                 }
                 let init = self.seed_evolve();
                 let kernel = self.kernel();
@@ -411,7 +412,8 @@ impl App {
             tool: self.tool,
             pen_clan: self.pen_clan,
             terrain_sign: self.terrain_sign,
-            grid_dim: self.grid_dim,
+            grid_w: self.grid_w,
+            grid_h: self.grid_h,
             topo: self.topo,
             target_gps: self.target_gps,
             ..Default::default()
@@ -485,14 +487,23 @@ impl App {
                     ui.horizontal(|ui| {
                         ui.label("Size");
                         egui::ComboBox::from_id_salt("grid_dim")
-                            .selected_text(format!("{0}×{0}", edits.grid_dim))
+                            .selected_text(format!("{}×{}", edits.grid_w, edits.grid_h))
                             .show_ui(ui, |ui| {
                                 for &n in &[64u32, 128, 256, 512, 1024, 2048] {
-                                    if ui.selectable_value(&mut edits.grid_dim, n, format!("{n}×{n}")).clicked() {
+                                    let sel = edits.grid_w == n && edits.grid_h == n;
+                                    if ui.selectable_label(sel, format!("{n}×{n}")).clicked() {
+                                        edits.grid_w = n;
+                                        edits.grid_h = n;
                                         edits.grid_dim_changed = true;
                                     }
                                 }
                             });
+                        for v in [&mut edits.grid_w, &mut edits.grid_h] {
+                            let r = ui.add(egui::DragValue::new(v).range(16..=2048).speed(8));
+                            if r.drag_stopped() || r.lost_focus() {
+                                edits.grid_dim_changed = true;
+                            }
+                        }
                     });
                     ui.horizontal(|ui| {
                         let wrap_name = |w: Wrap| match w {
@@ -632,14 +643,14 @@ impl App {
                 if self.kernel_weighted { "B14-18/S12-24".into() } else { "B3/S23".into() };
         }
         if edits.gen_terrain || edits.flat_terrain {
-            let n = (self.grid_dim * self.grid_dim) as usize;
+            let n = (self.grid_w * self.grid_h) as usize;
             if edits.flat_terrain {
                 self.env = vec![0.0; n];
             } else {
                 self.seed_counter = self.seed_counter.wrapping_add(1);
                 let mut s = 0x7E44_u64 ^ ((self.seed_counter as u64) << 13);
                 let mut rng = move || xorshift(&mut s);
-                self.env = generate_terrain(self.grid_dim, self.grid_dim, &mut rng);
+                self.env = generate_terrain(self.grid_w, self.grid_h, &mut rng);
             }
             if let (Some(SimKind::Evolve(esim)), Some(gpu)) = (self.sim.as_ref(), self.gpu.as_ref()) {
                 esim.upload_env(gpu, &self.env);
@@ -654,8 +665,10 @@ impl App {
         if edits.topo_changed {
             self.topo = edits.topo;
         }
+        // hard cap regardless of how the value arrived: GPU textures max 2048/axis
+        self.grid_w = edits.grid_w.clamp(16, 2048);
+        self.grid_h = edits.grid_h.clamp(16, 2048);
         if edits.grid_dim_changed {
-            self.grid_dim = edits.grid_dim;
             self.env = Vec::new(); // force realloc at new size in rebuild_sim
             self.rebuild_sim();
         } else if edits.topo_changed {
@@ -703,7 +716,7 @@ impl App {
             (1.0 - 2.0 * cursor.1 / sh) as f32,
         );
         let aspect = (sw / sh.max(1.0)) as f32;
-        let dims = (self.grid_dim, self.grid_dim);
+        let dims = (self.grid_w, self.grid_h);
         let Some((cx, cy)) = pick_cell(&self.cam, aspect, ndc, self.mode, dims) else { return };
         match self.tool {
             Tool::Orbit => {}
@@ -800,7 +813,8 @@ struct PanelEdits {
     density: f32,
     params_changed: bool,
     start_search: bool,
-    grid_dim: u32,
+    grid_w: u32,
+    grid_h: u32,
     grid_dim_changed: bool,
     topo: Topology,
     topo_changed: bool,

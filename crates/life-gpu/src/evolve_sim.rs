@@ -187,6 +187,8 @@ impl EvolveSim {
     }
 
     pub fn upload_env(&self, ctx: &GpuContext, env: &[f32]) {
+        // size mismatch (e.g. grid resized mid-edit, sim not rebuilt yet): skip
+        if env.len() != (self.w * self.h) as usize { return; }
         ctx.queue.write_texture(
             wgpu::TexelCopyTextureInfo { texture: &self.env_tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
             bytemuck::cast_slice(env),
