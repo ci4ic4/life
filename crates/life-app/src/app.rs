@@ -624,13 +624,13 @@ impl App {
         } else {
             edits.tool
         };
+        self.evolve_rule_text = edits.evolve_rule_text.clone();
         if edits.kernel_changed {
             self.kernel_weighted = edits.kernel_weighted;
             // swap in the kernel family's default rule
             self.evolve_rule_text =
                 if self.kernel_weighted { "B14-18/S12-24".into() } else { "B3/S23".into() };
         }
-        self.evolve_rule_text = if edits.evolve_rule_changed { edits.evolve_rule_text.clone() } else { self.evolve_rule_text.clone() };
         if edits.gen_terrain || edits.flat_terrain {
             let n = (self.grid_dim * self.grid_dim) as usize;
             if edits.flat_terrain {
