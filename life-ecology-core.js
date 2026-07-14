@@ -28,38 +28,110 @@
 
   const MOORE = [[-1,-1],[0,-1],[1,-1],[-1,0],[1,0],[-1,1],[0,1],[1,1]];
 
-  function stepEcology(grid, COLS, ROWS, Cwrap, Rwrap, params, rng) {
-    const { betaRed, betaGrey, sigma } = params;
-    const next = new Uint8Array(COLS * ROWS);
-    for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS; c++) {
-        const here = r * COLS + c, v = grid[here];
-        if (v === STATES.RED || v === STATES.GREY) {
-          // natural survival (predation added in slice 2)
-          next[here] = rng() < sigma ? v : STATES.EMPTY;
-          continue;
-        }
-        // EMPTY: contact-process colonisation from prey neighbours
-        let nRed = 0, nGrey = 0;
-        for (const [dc, dr] of MOORE) {
-          const i = resolveCell(c + dc, r + dr, COLS, ROWS, Cwrap, Rwrap);
-          if (i === null) continue;
-          if (grid[i] === STATES.RED) nRed++;
-          else if (grid[i] === STATES.GREY) nGrey++;
-        }
-        const pRed  = nRed  ? 1 - Math.pow(1 - betaRed,  nRed)  : 0;
-        const pGrey = nGrey ? 1 - Math.pow(1 - betaGrey, nGrey) : 0;
-        // one draw partitions the empty cell: red slice first, then grey.
-        // ponytail: red-first is a fixed convention; grey still wins via higher
-        // beta when reds are scarce, which is the invasive-advantage story.
-        const roll = rng();
-        if (roll < pRed) next[here] = STATES.RED;
-        else if (roll < pRed + pGrey) next[here] = STATES.GREY;
-        else next[here] = STATES.EMPTY;
-      }
+  function hasEmptyNeighbour(grid, c, r, COLS, ROWS, Cwrap, Rwrap) {
+    for (const [dc, dr] of MOORE) {
+      const i = resolveCell(c + dc, r + dr, COLS, ROWS, Cwrap, Rwrap);
+      if (i !== null && grid[i] === STATES.EMPTY) return true;
     }
-    return next;
+    return false;
   }
 
-  return { STATES, resolveCell, stepEcology };
+  // One generation. Prey grow by contact process; the marten is a conserved
+  // predator with an energy counter. Two phases with an intent buffer (claim[]):
+  // (1) each marten claims its highest-priority prey neighbour; (2) each prey is
+  // eaten by the highest-priority marten that claimed it (unless it evades), so
+  // one prey dies at most once and one marten eats at most once. Missed hunts
+  // (lost the arbitration, or prey evaded) feed nobody.
+  function stepEcology(grid, energy, COLS, ROWS, Cwrap, Rwrap, params, rng) {
+    const N = COLS * ROWS;
+    const { betaRed, betaGrey, sigma,
+            delta = 1, g = 3, eBreed = 10, e0 = 5, breedCost = 5, eCap = 15, mu = 0.5,
+            evadeRed = 0, evadeGrey = 0, gen = 0 } = params;
+    const { EMPTY, RED, GREY, MARTEN } = STATES;
+    const nextGrid = new Uint8Array(N), nextEnergy = new Float32Array(N);
+    const isPrey = v => v === RED || v === GREY;
+
+    // deterministic arbitration priority for the ordered pair (marten, prey, gen)
+    function prio(mIdx, pIdx) {
+      let h = (Math.imul(mIdx + 1, 1973) ^ Math.imul(pIdx + 1, 9277) ^ Math.imul(gen + 1, 26699)) >>> 0;
+      h ^= h >>> 16; h = Math.imul(h, 0x7feb352d) >>> 0; h ^= h >>> 15;
+      h = Math.imul(h, 0x846ca68b) >>> 0; h ^= h >>> 16;
+      return h >>> 0;
+    }
+
+    // PHASE 1: each hungry marten claims one prey neighbour (highest priority).
+    const claim = new Int32Array(N).fill(-1);
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      const m = r * COLS + c;
+      if (grid[m] !== MARTEN || energy[m] >= eCap) continue;   // sated martens rest
+      let best = -1, bestP = 0;
+      for (const [dc, dr] of MOORE) {
+        const i = resolveCell(c + dc, r + dr, COLS, ROWS, Cwrap, Rwrap);
+        if (i === null || !isPrey(grid[i])) continue;
+        const p = prio(m, i);
+        if (best < 0 || p > bestP) { best = i; bestP = p; }
+      }
+      claim[m] = best;
+    }
+
+    // PHASE 2a: resolve who eats whom. A prey's winner is the highest-priority
+    // marten that claimed it; the prey is eaten unless it evades.
+    const eaten = new Uint8Array(N), ate = new Uint8Array(N);
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      const p = r * COLS + c;
+      if (!isPrey(grid[p])) continue;
+      let winner = -1, bestP = 0;
+      for (const [dc, dr] of MOORE) {
+        const i = resolveCell(c + dc, r + dr, COLS, ROWS, Cwrap, Rwrap);
+        if (i === null || grid[i] !== MARTEN || claim[i] !== p) continue;
+        const pr = prio(i, p);
+        if (winner < 0 || pr > bestP) { winner = i; bestP = pr; }
+      }
+      if (winner < 0) continue;
+      const evade = grid[p] === RED ? evadeRed : evadeGrey;
+      if (evade > 0 && rng() < evade) continue;   // escaped; winner still spent its hunt
+      eaten[p] = 1; ate[winner] = 1;
+    }
+
+    // PHASE 2b: build the next grid + energy.
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      const here = r * COLS + c, v = grid[here];
+      if (v === MARTEN) {
+        let e = energy[here] - delta + (ate[here] ? g : 0);
+        // ponytail: flat breed cost when eligible AND could seed an empty neighbour;
+        // exact per-offspring charge needs radius-2, not worth it for the dynamics.
+        if (energy[here] >= eBreed && hasEmptyNeighbour(grid, c, r, COLS, ROWS, Cwrap, Rwrap)) e -= breedCost;
+        if (e <= 0) { nextGrid[here] = EMPTY; nextEnergy[here] = 0; }
+        else { nextGrid[here] = MARTEN; nextEnergy[here] = e < eCap ? e : eCap; }
+        continue;
+      }
+      if (isPrey(v)) {
+        nextGrid[here] = eaten[here] ? EMPTY : (rng() < sigma ? v : EMPTY);
+        continue;
+      }
+      // EMPTY: contact-process prey colonisation vs marten breeding spill, one roll.
+      let nRed = 0, nGrey = 0, nElig = 0;
+      for (const [dc, dr] of MOORE) {
+        const i = resolveCell(c + dc, r + dr, COLS, ROWS, Cwrap, Rwrap);
+        if (i === null) continue;
+        if (grid[i] === RED) nRed++;
+        else if (grid[i] === GREY) nGrey++;
+        else if (grid[i] === MARTEN && energy[i] >= eBreed) nElig++;
+      }
+      const pRed  = nRed  ? 1 - Math.pow(1 - betaRed,  nRed)  : 0;
+      const pGrey = nGrey ? 1 - Math.pow(1 - betaGrey, nGrey) : 0;
+      const pMart = nElig ? 1 - Math.pow(1 - mu,       nElig) : 0;
+      // one draw partitions the empty cell: red slice first, then grey, then marten.
+      // ponytail: red-first is a fixed convention; grey still wins via higher
+      // beta when reds are scarce, which is the invasive-advantage story.
+      const roll = rng();
+      if (roll < pRed) nextGrid[here] = RED;
+      else if (roll < pRed + pGrey) nextGrid[here] = GREY;
+      else if (roll < pRed + pGrey + pMart) { nextGrid[here] = MARTEN; nextEnergy[here] = e0; }
+      else nextGrid[here] = EMPTY;
+    }
+    return { grid: nextGrid, energy: nextEnergy };
+  }
+
+  return { STATES, resolveCell, stepEcology, hasEmptyNeighbour };
 });
