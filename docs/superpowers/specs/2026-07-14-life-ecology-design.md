@@ -144,9 +144,19 @@ Sliders, like the existing files. Everything else held fixed.
 - **Slice 1 — competition.** RED + GREY, `β_grey > β_red`, contest empties.
   *Payoff:* greys drive reds to near-extinction, no predator. A real result
   (invasive competitive exclusion) on its own.
-- **Slice 2 — predator (risk gate).** Single prey + MARTEN, conserved predation
-  + energy. `evade = 0`. *Payoff:* predator–prey waves that persist and
-  oscillate without collapsing. **This slice is where the project lives or dies.**
+- **Slice 2 — predator (risk gate).** RED + GREY (kept, not collapsed — avoids
+  churn) + MARTEN. Conserved predation + energy, `evade = 0` so the marten eats
+  both prey **equally** (no asymmetry yet). *Payoff:* predator–prey waves that
+  persist and oscillate without collapsing. **This slice is where the project
+  lives or dies** — a headless persistence/oscillation check is the feasibility
+  gate; if the cell-based conserved model can't sustain oscillation even after
+  tuning, that is the real finding (fall back to WaTor movement or a field model).
+
+  **Slice-1 evaluation outcome (2026-07-14):** at β 0.10/0.18 grey drives red to
+  *full* extinction by ~gen 500. To keep reds alive for the marten rescue the
+  user chose the **gentle β gap** (cheapest, no new structure): narrow the gap so
+  exclusion is slow and reds linger, letting the predator do the tipping. Terrain
+  refuge and forced early reintroduction are **not** used — deferred/​dropped.
 - **Slice 3 — asymmetric evasion (keystone).** Split prey back to RED/GREY, add
   `evade_red ≫ evade_grey`, add a **"Reintroduce martens"** button. *Payoff:*
   toggle martens on → greys crash → reds recover. The whole point, in one click.
