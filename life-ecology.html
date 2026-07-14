@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Squirrels & Pine Martens — Ecology on a Torus</title>
+<style>
+  body { margin:0; background:#0a0c10; color:#cdd6e0; font:13px/1.4 system-ui,sans-serif; overflow:hidden; }
+  #ui { position:fixed; top:10px; left:10px; z-index:10; background:#151a22ee; padding:12px 14px;
+        border:1px solid #2a3340; border-radius:8px; width:230px; }
+  #ui summary { font-size:14px; font-weight:600; cursor:pointer; margin:0 0 8px; user-select:none; }
+  #ui details:not([open]) summary { margin:0; }   /* tight box when collapsed */
+  #ui label { display:block; margin:7px 0 2px; color:#8a96a6; font-size:11px; }
+  #ui button { background:#222c39; color:#cdd6e0; border:1px solid #36424f; border-radius:5px;
+        padding:5px 9px; cursor:pointer; font-size:12px; }
+  #ui button:hover { background:#2c3a49; }
+  #ui button.tool.active { background:#5a4a1a; border-color:#ffb000; color:#ffd479; }
+  #ui button.spec.active { background:#2c3a49; border-color:#8a96a6; }
+  #ui select { width:100%; background:#0e1218; color:#cdd6e0;
+        border:1px solid #36424f; border-radius:5px; padding:4px; box-sizing:border-box; }
+  #ui input[type=range] { width:100%; }
+  #ui .grp { font-size:11px; font-weight:600; margin-top:10px; padding-top:6px; border-top:1px solid #2a3340; }
+  .row { display:flex; gap:6px; margin-top:6px; }
+  .row button { flex:1; }
+  #status { margin-top:10px; padding-top:8px; border-top:1px solid #2a3340; color:#8a96a6; font-size:11px; }
+  #status b { color:#7fd18c; }
+  #gen { color:#cdd6e0; }
+  dialog#help { max-width:460px; background:#151a22; color:#b8c2d0; border:1px solid #36424f;
+        border-radius:10px; padding:18px 20px; font:13px/1.5 system-ui,sans-serif; }
+  dialog#help::backdrop { background:#000a; }
+  dialog#help h2 { margin:0 0 6px; font-size:16px; color:#cdd6e0; }
+  dialog#help h3 { margin:14px 0 4px; font-size:11px; color:#ffd479; letter-spacing:.5px; text-transform:uppercase; }
+  dialog#help ul { margin:4px 0; padding-left:18px; }
+  dialog#help b { color:#cdd6e0; }
+</style>
+
+<div id="ui">
+  <details open>
+  <summary>Squirrels &amp; Pine Martens — Ecology on a Torus</summary>
+
+  <label>Topology</label>
+  <select id="topo">
+    <option value="torus">Torus — wrap both</option>
+    <option value="klein">Klein bottle — flipped seam</option>
+    <option value="mobius">Möbius — 1 flipped seam, open ends</option>
+    <option value="cylinder">Cylinder — 1 wrap, open ends</option>
+  </select>
+
+  <div class="grp">Squirrels</div>
+  <label>Red birth rate β (<span id="brv">0.10</span>) — native</label>
+  <input type="range" id="br" min="0" max="100" value="10">
+  <label>Grey birth rate β (<span id="bgv">0.18</span>) — invasive</label>
+  <input type="range" id="bg" min="0" max="100" value="18">
+  <label>Natural survival σ (<span id="sgv">0.92</span>)</label>
+  <input type="range" id="sg" min="0" max="100" value="92">
+
+  <label>Pen species</label>
+  <div class="row" id="specRow">
+    <button class="spec active" data-spec="1" style="color:#e0533a">■ Red</button>
+    <button class="spec" data-spec="2" style="color:#9aa4b0">■ Grey</button>
+  </div>
+
+  <label>Tool (click/drag on the surface)</label>
+  <div class="row">
+    <button class="tool active" data-tool="orbit">Orbit</button>
+    <button class="tool" data-tool="pen">Pen</button>
+  </div>
+
+  <div class="row">
+    <button id="play">▶ Play</button>
+    <button id="step">Step</button>
+  </div>
+  <div class="row">
+    <button id="rand">Random</button>
+    <button id="clear">Clear</button>
+  </div>
+
+  <label>Speed (<span id="spd">10</span> gen/s)</label>
+  <input type="range" id="speed" min="1" max="60" value="10">
+
+  <label>Density on Random (<span id="densv">0.30</span>)</label>
+  <input type="range" id="dens" min="0" max="100" value="30">
+
+  <label id="sizeLbl">Grid size (cols × rows, 20–300)</label>
+  <div class="row">
+    <input type="number" id="cols" value="80" min="20" max="300">
+    <input type="number" id="rows" value="40" min="20" max="300">
+  </div>
+  <button id="apply" style="margin-top:6px; width:100%">Apply size</button>
+
+  <button id="view2d" style="margin-top:8px; width:100%">▦ 2D view</button>
+  <button id="reset" style="margin-top:6px; width:100%">Reset view</button>
+  <button id="helpBtn" style="margin-top:6px; width:100%">Help / About</button>
+
+  <div id="status">
+    Gen <span id="gen">0</span> · pop <span id="pop">0</span><br>
+    <span style="color:#e0533a">● red</span> <span id="nred">—</span>&nbsp;&nbsp;
+    <span style="color:#9aa4b0">● grey</span> <span id="ngrey">—</span>
+    <div style="margin-top:4px; font-size:10px; color:#566">populations vs time →</div>
+    <canvas id="chart" width="412" height="90"
+            style="width:100%; margin-top:2px; background:#0e1218; border:1px solid #2a3340; border-radius:4px;"></canvas>
+  </div>
+  </details>
+</div>
+
+<dialog id="help">
+  <h2>Squirrels &amp; Pine Martens — Ecology on a Torus</h2>
+  <p>A spatial contact process on a torus: two rival prey species compete for
+  empty ground. <b>Red squirrels</b> (native) and <b>grey squirrels</b>
+  (invasive) each colonise an adjacent empty cell at their own per-species
+  birth rate β; an occupied cell survives each tick with probability σ.</p>
+
+  <h3>Why grey tends to win</h3>
+  <p>Grey's default β is set higher than red's — the invasive-species
+  advantage. With no predation yet, a higher β simply out-colonises empty
+  ground faster, so grey expands and red's share shrinks over time. Watch
+  the two lines in the population chart cross.</p>
+
+  <h3>Controls</h3>
+  <ul>
+    <li><b>β red / β grey / σ</b> — the ecology knobs; raise σ for
+      longer-lived populations, β for faster colonisation.</li>
+    <li><b>Pen species</b> — pick Red or Grey, then use the <b>Pen</b> tool
+      to paint/erase cells by hand.</li>
+    <li><b>Play / Step / Random / Clear</b>, <b>Speed, Density, Grid size</b>,
+      <b>2D / 3D</b> — as usual.</li>
+  </ul>
+  <p>Predation (pine martens), energy, and evasion are later slices — this
+  is slice 1, the base red/grey contact process. Click the title bar to
+  collapse this panel. Esc closes this help.</p>
+
+  <button id="helpClose" style="margin-top:14px">Close</button>
+</dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="life-ecology-core.js"></script>
+<script>
+// ---- grid / simulation ------------------------------------------------------
+const { STATES, stepEcology } = LifeEco;
+let COLS = 80, ROWS = 40;
+let grid = new Uint8Array(COLS * ROWS);          // 0 empty, 1 red, 2 grey (3 marten: slice 2)
+let params = { betaRed: 0.10, betaGrey: 0.18, sigma: 0.92 };
+let Cwrap = 'straight', Rwrap = 'straight';
+const TOPOS = { torus:['straight','straight'], klein:['flip','straight'],
+                mobius:['flip','none'], cylinder:['straight','none'] };
+let generation = 0;
+const idx = (c, r) => r * COLS + c;
+let rng = Math.random;
+
+function step() {
+  grid = stepEcology(grid, COLS, ROWS, Cwrap, Rwrap, params, rng);
+  generation++;
+  paint(); updateStatus();
+}
+function randomize() {
+  const d = +document.getElementById('dens').value / 100;
+  for (let i = 0; i < grid.length; i++)
+    grid[i] = rng() < d ? (rng() < 0.5 ? STATES.RED : STATES.GREY) : STATES.EMPTY;
+  freshStart();
+}
+function clearGrid() { grid.fill(0); freshStart(); }
+function freshStart() { generation = 0; popHist.length = 0;
+  document.getElementById('gen').textContent = '0'; paint(); updateStatus(); }
+
+// ---- status + 2-line population chart ---------------------------------------
+const popHist = [], HIST_MAX = 300;
+function counts() { let nr = 0, ng = 0;
+  for (const v of grid) { if (v === STATES.RED) nr++; else if (v === STATES.GREY) ng++; }
+  return { nr, ng }; }
+function updateStatus() {
+  const { nr, ng } = counts();
+  document.getElementById('gen').textContent = generation;
+  document.getElementById('pop').textContent = nr + ng;
+  document.getElementById('nred').textContent = nr;
+  document.getElementById('ngrey').textContent = ng;
+  popHist.push({ nr, ng });
+  if (popHist.length > HIST_MAX) popHist.shift();
+  drawChart();
+}
+function drawChart() {
+  const cv = document.getElementById('chart'); if (!cv) return;
+  const ctx = cv.getContext('2d'), W = cv.width, H = cv.height, pad = 8;
+  const total = COLS * ROWS;
+  const x = i => pad + (i / (HIST_MAX - 1)) * (W - 2*pad);
+  const y = n => (H - pad) - (n / total) * (H - 2*pad);   // pop fraction 0..1
+  ctx.clearRect(0, 0, W, H);
+  ctx.strokeStyle = '#222c39'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(pad, y(0)); ctx.lineTo(W-pad, y(0)); ctx.stroke();
+  const line = (key, col) => { ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath();
+    popHist.forEach((h, i) => { const px = x(i), py = y(h[key]); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+    ctx.stroke(); };
+  line('nr', '#e0533a'); line('ng', '#9aa4b0');
+}
+
+// ---- colour: species colours, dead dark -------------------------------------
+const DEAD = [26, 18, 8], RED_RGB = [224, 83, 58], GREY_RGB = [154, 164, 176];
+function cellRGB(v) { return v === STATES.RED ? RED_RGB : v === STATES.GREY ? GREY_RGB : DEAD; }
+
+// ---- WebGL: paint grid into a texture, wrap it on a torus --------------------
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0c10);
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 1000);
+camera.position.set(0, 4, 9);
+const DEFAULT_CAM = camera.position.clone();
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+dir.position.set(5, 8, 6); scene.add(dir);
+
+let texData = new Uint8Array(COLS * ROWS * 4);
+let tex = new THREE.DataTexture(texData, COLS, ROWS, THREE.RGBAFormat);
+tex.magFilter = tex.minFilter = THREE.NearestFilter;
+
+function paint() {
+  for (let i = 0; i < grid.length; i++) {
+    const rgb = cellRGB(grid[i]);
+    texData[i*4] = rgb[0]; texData[i*4+1] = rgb[1]; texData[i*4+2] = rgb[2]; texData[i*4+3] = 255;
+  }
+  tex.needsUpdate = true;
+}
+
+const torus = new THREE.Mesh(
+  new THREE.TorusGeometry(3, 1.3, ROWS, COLS),
+  new THREE.MeshStandardMaterial({ map: tex, roughness: 0.65, metalness: 0.1 })
+);
+torus.rotation.x = Math.PI / 2;
+scene.add(torus);
+
+const plane = new THREE.Mesh(
+  new THREE.PlaneGeometry(8, 8 * ROWS / COLS),
+  new THREE.MeshBasicMaterial({ map: tex })
+);
+plane.visible = false;
+scene.add(plane);
+
+// ---- timing loop --------------------------------------------------------------
+let playing = false, acc = 0, last = performance.now(), gps = 10;
+function animate(now) {
+  requestAnimationFrame(animate);
+  const dt = (now - last) / 1000; last = now;
+  if (playing) {
+    acc += dt;
+    const interval = 1 / gps;
+    while (acc >= interval) { step(); acc -= interval; }
+    if (acc > 1) acc = 0;
+  }
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+function stop()  { playing = false; document.getElementById('play').textContent = '▶ Play'; }
+function start() { playing = true;  document.getElementById('play').textContent = '⏸ Pause'; }
+
+// ---- UI wiring --------------------------------------------------------------
+const $ = id => document.getElementById(id);
+$('play').onclick  = () => playing ? stop() : start();
+$('step').onclick  = () => step();
+$('rand').onclick  = randomize;
+$('clear').onclick = clearGrid;
+$('helpBtn').onclick   = () => $('help').showModal();
+$('helpClose').onclick = () => $('help').close();
+$('help').addEventListener('click', e => { if (e.target === $('help')) $('help').close(); });
+
+let tool = 'orbit', penSpec = STATES.RED;
+function setTool(t) { tool = t; controls.enabled = true;
+  controls.mouseButtons.LEFT = (t === 'pen') ? -1 : THREE.MOUSE.ROTATE;
+  document.querySelectorAll('.tool').forEach(b => b.classList.toggle('active', b.dataset.tool === t)); }
+document.querySelectorAll('.tool').forEach(b => b.onclick = () => setTool(b.dataset.tool));
+document.querySelectorAll('.spec').forEach(b => b.onclick = () => {
+  penSpec = +b.dataset.spec;
+  document.querySelectorAll('.spec').forEach(x => x.classList.toggle('active', x === b)); });
+
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+function cellAt(e) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  ndc.x =  ((e.clientX - rect.left) / rect.width)  * 2 - 1;
+  ndc.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
+  raycaster.setFromCamera(ndc, camera);
+  const hit = raycaster.intersectObject(is2D ? plane : torus)[0];
+  return (hit && hit.uv) ? [Math.floor(hit.uv.x * COLS) % COLS, Math.floor(hit.uv.y * ROWS) % ROWS] : null;
+}
+
+let painting = false, paintVal;
+const dom = renderer.domElement;
+dom.addEventListener('pointerdown', e => {
+  if (tool !== 'pen' || e.button !== 0) return;
+  const cell = cellAt(e); if (!cell) return;
+  paintVal = grid[idx(cell[0], cell[1])] ? STATES.EMPTY : penSpec;   // first cell draw/erase
+  grid[idx(cell[0], cell[1])] = paintVal; painting = true; paint(); updateStatus();
+});
+dom.addEventListener('pointermove', e => {
+  if (!painting) return; const cell = cellAt(e); if (!cell) return;
+  grid[idx(cell[0], cell[1])] = paintVal; paint(); updateStatus();
+});
+dom.addEventListener('pointerup', () => { painting = false; });
+
+function rebuild(c, r) {
+  COLS = c; ROWS = r;
+  grid = new Uint8Array(COLS * ROWS);
+  texData = new Uint8Array(COLS * ROWS * 4);
+  tex.dispose();
+  tex = new THREE.DataTexture(texData, COLS, ROWS, THREE.RGBAFormat);
+  tex.magFilter = tex.minFilter = THREE.NearestFilter;
+  // Cap display-mesh segments: the texture already carries per-cell detail, so we
+  // don't need a vertex per cell once grids get large (keeps the geometry cheap).
+  const segC = Math.min(COLS, 512), segR = Math.min(ROWS, 512);
+  torus.geometry.dispose();
+  torus.geometry = new THREE.TorusGeometry(3, 1.3, segR, segC);
+  torus.material.map = tex; torus.material.needsUpdate = true;
+  plane.geometry.dispose();
+  plane.geometry = new THREE.PlaneGeometry(8, 8 * ROWS / COLS);
+  plane.material.map = tex; plane.material.needsUpdate = true;
+  freshStart();
+}
+$('apply').onclick = () => {
+  const cap = 300;   // ponytail: CPU-only cap for now, GPU raises this in slice 4
+  const c = Math.max(20, Math.min(cap, +$('cols').value | 0));
+  const r = Math.max(20, Math.min(cap, +$('rows').value | 0));
+  $('cols').value = c; $('rows').value = r;
+  rebuild(c, r);
+  randomize();
+};
+let is2D = false;
+function setView(twoD) {
+  is2D = twoD;
+  torus.visible = !twoD; plane.visible = twoD;
+  controls.enableRotate = !twoD;
+  camera.position.copy(twoD ? new THREE.Vector3(0,0,6) : DEFAULT_CAM);
+  controls.target.set(0,0,0); controls.update();
+  $('view2d').textContent = twoD ? '◉ 3D view' : '▦ 2D view';
+}
+$('view2d').onclick = () => setView(!is2D);
+$('reset').onclick  = () => setView(is2D);
+
+$('br').oninput = e => { params.betaRed  = +e.target.value/100; $('brv').textContent = params.betaRed.toFixed(2); };
+$('bg').oninput = e => { params.betaGrey = +e.target.value/100; $('bgv').textContent = params.betaGrey.toFixed(2); };
+$('sg').oninput = e => { params.sigma    = +e.target.value/100; $('sgv').textContent = params.sigma.toFixed(2); };
+$('topo').onchange = e => { [Cwrap, Rwrap] = TOPOS[e.target.value]; };
+$('speed').oninput = e => { gps = +e.target.value; $('spd').textContent = gps; };
+$('dens').oninput  = e => $('densv').textContent = (+e.target.value/100).toFixed(2);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ---- boot -------------------------------------------------------------------
+function selfTest() {   // boot check: core reachable + grey out-breeds red
+  const g = new Uint8Array(9); g[3] = STATES.RED; g[5] = STATES.GREY;
+  let nr = 0, ng = 0;
+  for (let t = 0; t < 4000; t++) {
+    const n = stepEcology(g, 3, 3, 'none', 'none', { betaRed: 0.1, betaGrey: 0.3, sigma: 1 }, Math.random);
+    if (n[4] === STATES.RED) nr++; else if (n[4] === STATES.GREY) ng++;
+  }
+  console.assert(ng > nr, `selfTest: grey ${ng} should out-colonise red ${nr}`);
+}
+selfTest();
+setView(false);
+randomize();
+requestAnimationFrame(animate);
+</script>
