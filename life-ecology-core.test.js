@@ -60,3 +60,20 @@ test("resolveCell wraps straight and returns null on 'none' edge", () => {
   assert.strictEqual(resolveCell(-1, 0, 4, 4, 'straight', 'straight'), 0 * 4 + 3);
   assert.strictEqual(resolveCell(-1, 0, 4, 4, 'none', 'none'), null);
 });
+
+test('grey competitively excludes red on a torus over time', () => {
+  const COLS = 60, ROWS = 30, N = COLS * ROWS;
+  const params = { betaRed: 0.10, betaGrey: 0.18, sigma: 0.92 };
+  const rng = mulberry32(12345);
+  let grid = new Uint8Array(N);
+  for (let i = 0; i < N; i++) grid[i] = rng() < 0.30 ? (rng() < 0.5 ? STATES.RED : STATES.GREY) : STATES.EMPTY;
+  const count = g => { let nr = 0, ng = 0; for (const v of g) { if (v === STATES.RED) nr++; else if (v === STATES.GREY) ng++; } return { nr, ng }; };
+  const start = count(grid);
+  for (let t = 0; t < 400; t++) grid = stepEcology(grid, COLS, ROWS, 'straight', 'straight', params, rng);
+  const end = count(grid);
+  // grey share rises, red share falls — competitive exclusion of the native
+  const startGreyShare = start.ng / (start.nr + start.ng);
+  const endGreyShare   = end.ng / (end.nr + end.ng);
+  assert.ok(endGreyShare > startGreyShare + 0.15, `grey share ${startGreyShare.toFixed(2)} -> ${endGreyShare.toFixed(2)}`);
+  assert.ok(end.nr < start.nr, `red count should fall: ${start.nr} -> ${end.nr}`);
+});
