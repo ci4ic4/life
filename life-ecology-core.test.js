@@ -77,3 +77,17 @@ test('grey competitively excludes red on a torus over time', () => {
   assert.ok(endGreyShare > startGreyShare + 0.15, `grey share ${startGreyShare.toFixed(2)} -> ${endGreyShare.toFixed(2)}`);
   assert.ok(end.nr < start.nr, `red count should fall: ${start.nr} -> ${end.nr}`);
 });
+
+test('flip topology wraps column and mirrors row', () => {
+  assert.strictEqual(resolveCell(-1, 0, 4, 4, 'flip', 'straight'), 15);
+  assert.strictEqual(resolveCell(-1, 0, 4, 4, 'straight', 'straight'), 3);
+});
+
+test('empty cell with zero prey neighbours stays empty', () => {
+  const COLS = 3, ROWS = 3;
+  const params = { betaRed: 0.5, betaGrey: 0.5, sigma: 1.0 };
+  const grid = new Uint8Array(COLS * ROWS);
+  const next = stepEcology(grid, COLS, ROWS, 'none', 'none', params, mulberry32(1));
+  const centreIndex = resolveCell(1, 1, COLS, ROWS, 'none', 'none');
+  assert.strictEqual(next[centreIndex], STATES.EMPTY);
+});
