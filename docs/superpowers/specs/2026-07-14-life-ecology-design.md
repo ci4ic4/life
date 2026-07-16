@@ -198,12 +198,10 @@ story is interesting in the first place.
 
 **What does not.**
 
-1. **No alternative marten food** — the biggest gap. Real martens are
-   generalists (voles, birds, berries, carrion), so their numbers do not depend
-   on squirrels and they hold greys down *steadily*. Ours eat only squirrels, so
-   martens crash when greys crash and greys rebound — the limit cycle is partly
-   an artifact of that missing food term. Cheapest fix: a small background feed
-   per tick (~2 lines).
+1. ~~**No alternative marten food**~~ — **CLOSED in slice 4**, see below. It was
+   the biggest gap and it was not a 2-line fix: a flat food term is
+   algebraically just a lower `δ`, so the food had to become a *shared* resource
+   to add any dynamics at all.
 2. **No squirrelpox** — arguably the most significant ecological omission.
    Greys carry a virus lethal to reds and largely harmless to themselves; it is
    a major driver of the real red decline. Here the grey advantage is birth rate
@@ -218,6 +216,51 @@ story is interesting in the first place.
 
 So: good enough to demonstrate *why* the marten works, and specifically why a
 non-selective predator would not. Not a forecasting tool.
+
+## Mechanic 4 — alternative marten food (slice 4)
+
+Real martens are generalists — voles, birds, eggs, berries, carrion — so their
+numbers do not track squirrels. Gap 1 above.
+
+**The flat term is a trap.** `e' = e − δ + food + …` is just
+`e' = e − (δ − food) + …`. A constant food source is *identical* to lowering
+metabolism: same model, renamed slider, no new behaviour. To do anything, the
+food must be a **shared resource** — which is also what it physically is, since
+alternative prey supports a bounded marten density (territoriality):
+
+```
+MARTEN cell:
+    e' = energy − δ + (ate ? g : 0) + forage / (1 + nMartenNeighbours)
+```
+
+Dividing by the local marten count makes the gain saturate with crowding, so
+martens acquire a **baseline density set by the countryside rather than by
+squirrels**. `forage = 0` reproduces slice 3 exactly (asserted), so the slice-3
+tests remain a valid no-subsidy control. With no prey at all, martens pack to
+roughly the Moore-8 maximum independent set (~25% of cells) and stop.
+
+### Two results this produced
+
+**Hyperpredation.** A subsidised predator does not decline as its prey declines,
+so the prey gets no numerical refuge. Greys go from cycling (267 ± 140) to
+extirpated (0 ± 0) — which is what actually happened in Ireland, so the
+subsidised model is the *more* faithful one. But past `forage ≈ 2` the martens
+take the reds down too; at `forage = 3` everything but the marten is gone. Same
+shape as cats subsidised by introduced rabbits exterminating island birds.
+
+**Better evasion can hurt the reds.** At `forage = 0`, raising `evade_red` from
+0.70 → 0.90 takes reds from 1005 to 349 and hands the greys the field (367 →
+1235). With no other food the marten lives *only* on squirrels, so reds that
+evade too well starve the predator that is protecting them. Unsubsidised, the
+reds must feed their own bodyguard.
+
+**Neither gap closed alone.** `forage=0, evade=0.90` → greys win.
+`forage=1.0, evade=0.70` → greys gone, reds mediocre (623). Only both together
+give the observed outcome — greys extirpated, reds abundant, martens sustained
+at modest density — so the defaults are **`forage = 1.0`, `evade_red = 0.90`**
+(red 70 → 1419, grey → 0, marten 106 on a seeded 60×30; red 160 → 2519,
+grey 2704 → 0, marten 194 in the shell at 80×40 unseeded). The two "gaps" were
+one interacting system, not two independent errors.
 
 ## Visual design
 
