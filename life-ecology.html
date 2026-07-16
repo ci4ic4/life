@@ -64,7 +64,8 @@
   <label>Metabolism δ (<span id="dv">1.0</span>) / tick</label>
   <input type="range" id="md" min="1" max="40" value="10">
   <label>Breed threshold E_breed (<span id="ebv">10</span>)</label>
-  <input type="range" id="meb" min="1" max="30" value="10">
+  <!-- max = eCap: energy is clamped there, so a higher E_breed can never be reached. -->
+  <input type="range" id="meb" min="1" max="15" value="10">
   <label>Breed spill μ (<span id="muv">0.50</span>)</label>
   <input type="range" id="mmu" min="0" max="100" value="50">
   <button id="seedMart" style="margin-top:6px; width:100%">Seed a marten population</button>
