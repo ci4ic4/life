@@ -312,6 +312,63 @@ keeps them alive long enough for help to arrive. Terrain was dropped in slice 1
 as unnecessary. The pox has made it load-bearing, and the model consequently
 states the case more bleakly than reality. **Refuges are the next slice.**
 
+## Mechanic 7 — terrain refuges (slice 7)
+
+Slice 6 killed every red because the torus had nowhere to hide. Real reds persist
+in strongholds — islands, Scottish forests, conifer plantations. This restores the
+woodland that slice 1 discarded.
+
+```
+EMPTY cell, colonisation:
+    e     = terrain · env[here]            // env: -1 conifer .. +1 broadleaf
+    bGrey = clamp01(betaGrey · (1 + e))    // broadleaf raises it, conifer collapses it
+    bRed  = betaRed                        // unchanged, always
+    pMart = untouched                      // the marten works both woods equally
+```
+
+**The grey's advantage is not intrinsic.** It is an acorn-and-hazel advantage, and
+it belongs to the broadleaf, not to the animal. So `betaGrey > betaRed` is a fact
+about *habitat*. Put a grey in a conifer basin and the invasive advantage simply
+evaporates. That is why terrain scales grey alone.
+
+**Red's β is flat, and that is load-bearing.** The first cut scaled red *down* in
+broadleaf as well, which implicitly claims reds cannot live there. They can — they
+held the whole country before the greys arrived; they are outcompeted, not
+excluded. That version passed every test and still produced a bug: the martens
+cleared the broadleaf and the reds could not follow (15 cells escaped). **The
+refuge had become a prison.** A test now pins red's β as terrain-independent.
+
+Terrain is static, so it rides in `params.env` rather than becoming a fourth
+positional array — no repeat of slice 6's 28-call-site migration. `terrain = 0` is
+byte-identical to omitting it, even with a field present. Field generator is
+borrowed from life-evolve (signed Gaussian bumps, torus-aware, normalised):
+refuges must be contiguous or they are not refuges.
+
+### The three acts
+
+| scenario | reds in refuge | reds outside | greys |
+|---|---|---|---|
+| pox, **no refuge**, martens | — | **0** | 0 |
+| pox, refuge, **no martens** | 1858 | **0** | 4391 |
+| pox, refuge, **martens** | 2068 | **3798** | **0** |
+
+Act two is a stable stalemate — reds penned in the stronghold, greys holding
+everything else, for as long as you care to run it. **That is Britain today.** Act
+three is the breakout.
+
+### The refuge does not need to be big
+
+| refuge width | final reds in / out |
+|---|---|
+| 5% | 239 / **5429** |
+| 20% | 1222 / 4543 |
+| 50% | 3077 / 2933 |
+
+A stronghold covering **5% of the map** still reseeds the entire landscape. It only
+has to *exist*. Protect the strongholds, restore the predator, and the rest
+follows — which is, roughly, the actual conservation strategy, arrived at here
+from two rules and a habitat field.
+
 ## How well does this correspond to the real world?
 
 Recorded after slice 3, since it is the question the whole exercise is meant to
@@ -339,11 +396,9 @@ story is interesting in the first place.
    arbitration (see Mechanic 2). **This is now the load-bearing simplification**:
    slice 5 needs martens adjacent to breed while Mechanic 4 needs them apart to
    eat, and roaming is what resolves that in reality. See Mechanic 5.
-4. **No habitat structure.** Reds do better in conifer, greys in broadleaf;
-   terrain was dropped in slice 1. **Slice 6 promoted this to the top of the
-   list**: with squirrelpox present and nowhere to hide, the reds have no refuge
-   to outlast the epidemic in, so the model states the case more bleakly than
-   reality. Refuges are the obvious next slice.
+4. ~~**No habitat structure**~~ — **CLOSED in slice 7**, see Mechanic 7. Slice 6
+   promoted it from a footnote to the top of the list; closing it turned the
+   model's bleakest result into its most hopeful one.
 5. **Timescale and patchiness.** Reds here recover almost everywhere within
    ~200 generations. The real recovery is patchy, contested, and takes decades.
 
