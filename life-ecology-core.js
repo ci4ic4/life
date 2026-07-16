@@ -55,7 +55,8 @@
     const N = COLS * ROWS;
     const { betaRed, betaGrey, sigma,
             delta = 1, g = 3, eBreed = 10, e0 = 5, breedCost = 5, eCap = 15, mu = 0.5,
-            evadeRed = 0, evadeGrey = 0, forage = 0, gen = 0 } = params;
+            evadeRed = 0, evadeGrey = 0, forage = 0, mate = false, mortality = 0,
+            gen = 0 } = params;
     const { EMPTY, RED, GREY, MARTEN } = STATES;
     const nextGrid = new Uint8Array(N), nextEnergy = new Float32Array(N);
     const isPrey = v => v === RED || v === GREY;
@@ -104,10 +105,27 @@
       eaten[p] = 1; ate[winner] = 1;
     }
 
+    // Breeding eligibility, computed once because both the parent (which pays the
+    // breed cost) and the empty cell (which counts eligible neighbours) must agree.
+    // With `mate`, a marten also needs an adjacent marten: one animal cannot found a
+    // population, so a reintroduction needs a viable *group* rather than a lucky
+    // individual. It pulls against forage, which is divided by that same crowding —
+    // so martens can only breed where prey is rich enough to pay for the company.
+    const canBreed = new Uint8Array(N);
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      const i = r * COLS + c;
+      if (grid[i] !== MARTEN || energy[i] < eBreed) continue;
+      if (!mate || countMartenNeighbours(grid, c, r, COLS, ROWS, Cwrap, Rwrap) > 0) canBreed[i] = 1;
+    }
+
     // PHASE 2b: build the next grid + energy.
     for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
       const here = r * COLS + c, v = grid[here];
       if (v === MARTEN) {
+        // Background mortality: age, accident, disease. Death that the energy ledger
+        // cannot express — without it a marten that breaks even never dies at all,
+        // and small founder groups never fail the way real ones do.
+        if (mortality > 0 && rng() < mortality) { nextGrid[here] = EMPTY; nextEnergy[here] = 0; continue; }
         let e = energy[here] - delta + (ate[here] ? g : 0);
         // Alternative prey (voles, birds, berries). It must be a SHARED resource:
         // a flat term would be algebraically identical to lowering delta, so it
@@ -117,7 +135,7 @@
         if (forage > 0) e += forage / (1 + countMartenNeighbours(grid, c, r, COLS, ROWS, Cwrap, Rwrap));
         // ponytail: flat breed cost when eligible AND could seed an empty neighbour;
         // exact per-offspring charge needs radius-2, not worth it for the dynamics.
-        if (energy[here] >= eBreed && hasEmptyNeighbour(grid, c, r, COLS, ROWS, Cwrap, Rwrap)) e -= breedCost;
+        if (canBreed[here] && hasEmptyNeighbour(grid, c, r, COLS, ROWS, Cwrap, Rwrap)) e -= breedCost;
         if (e <= 0) { nextGrid[here] = EMPTY; nextEnergy[here] = 0; }
         else { nextGrid[here] = MARTEN; nextEnergy[here] = e < eCap ? e : eCap; }
         continue;
@@ -133,7 +151,7 @@
         if (i === null) continue;
         if (grid[i] === RED) nRed++;
         else if (grid[i] === GREY) nGrey++;
-        else if (grid[i] === MARTEN && energy[i] >= eBreed) nElig++;
+        else if (grid[i] === MARTEN && canBreed[i]) nElig++;
       }
       const pRed  = nRed  ? 1 - Math.pow(1 - betaRed,  nRed)  : 0;
       const pGrey = nGrey ? 1 - Math.pow(1 - betaGrey, nGrey) : 0;

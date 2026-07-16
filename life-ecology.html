@@ -17,6 +17,10 @@
         border:1px solid #36424f; border-radius:5px; padding:4px; box-sizing:border-box; }
   #ui input[type=range] { width:100%; }
   #ui .grp { font-size:11px; font-weight:600; margin-top:10px; padding-top:6px; border-top:1px solid #2a3340; }
+  /* Groups collapse so the panel fits without shrinking the font. */
+  #ui details.grp > summary { font-size:11px; font-weight:600; margin:0; color:#cdd6e0; }
+  #ui details.grp[open] > summary { margin-bottom:4px; }
+  #ui details.grp > summary::marker { color:#5a6a7a; }
   .row { display:flex; gap:6px; margin-top:6px; }
   .row button { flex:1; }
   #status { margin-top:10px; padding-top:8px; border-top:1px solid #2a3340; color:#8a96a6; font-size:11px; }
@@ -43,13 +47,14 @@
     <option value="cylinder">Cylinder — 1 wrap, open ends</option>
   </select>
 
-  <div class="grp">Squirrels</div>
+  <details class="grp" open><summary>Squirrels</summary>
   <label>Red birth rate β (<span id="brv">0.10</span>) — native</label>
   <input type="range" id="br" min="0" max="100" value="10">
   <label>Grey birth rate β (<span id="bgv">0.14</span>) — invasive</label>
   <input type="range" id="bg" min="0" max="100" value="14">
   <label>Natural survival σ (<span id="sgv">0.92</span>)</label>
   <input type="range" id="sg" min="0" max="100" value="92">
+  </details>
 
   <label>Pen species</label>
   <div class="row" id="specRow">
@@ -58,26 +63,36 @@
     <button class="spec" data-spec="3" style="color:#b07a40">■ Marten</button>
   </div>
 
-  <div class="grp">Pine marten</div>
-  <label>Meal energy g (<span id="gv">3.0</span>)</label>
-  <input type="range" id="mg" min="0" max="80" value="30">
-  <label>Metabolism δ (<span id="dv">1.0</span>) / tick</label>
-  <input type="range" id="md" min="1" max="40" value="10">
-  <label>Breed threshold E_breed (<span id="ebv">10</span>)</label>
-  <!-- max = eCap: energy is clamped there, so a higher E_breed can never be reached. -->
-  <input type="range" id="meb" min="1" max="15" value="10">
-  <label>Breed spill μ (<span id="muv">0.50</span>)</label>
-  <input type="range" id="mmu" min="0" max="100" value="50">
-  <label>Other food — voles, birds, berries (<span id="fov">1.0</span>)</label>
-  <input type="range" id="fo" min="0" max="30" value="10">
+  <details class="grp"><summary>Pine marten</summary>
+    <label>Meal energy g (<span id="gv">3.0</span>)</label>
+    <input type="range" id="mg" min="0" max="80" value="30">
+    <label>Metabolism δ (<span id="dv">1.0</span>) / tick</label>
+    <input type="range" id="md" min="1" max="40" value="10">
+    <label>Breed threshold E_breed (<span id="ebv">10</span>)</label>
+    <!-- max = eCap: energy is clamped there, so a higher E_breed can never be reached. -->
+    <input type="range" id="meb" min="1" max="15" value="10">
+    <label>Breed spill μ (<span id="muv">0.50</span>)</label>
+    <input type="range" id="mmu" min="0" max="100" value="50">
+    <label>Other food — voles, birds, berries (<span id="fov">2.0</span>)</label>
+    <input type="range" id="fo" min="0" max="40" value="20">
+  </details>
+
+  <details class="grp"><summary>Founding a population</summary>
+    <label><input type="checkbox" id="mate" checked> Breeding needs a mate</label>
+    <label>Background mortality (<span id="mov">0.005</span>) / tick</label>
+    <input type="range" id="mo" min="0" max="40" value="5">
+    <label>Release size (<span id="rsv">40</span> martens, as one group)</label>
+    <input type="range" id="rs" min="1" max="200" value="40">
+  </details>
   <button id="seedMart" style="margin-top:6px; width:100%">Reintroduce martens</button>
 
-  <div class="grp">Evasion — the keystone</div>
-  <label>Red evades hunt (<span id="erv">0.90</span>)</label>
-  <input type="range" id="er" min="0" max="100" value="90">
-  <label>Grey evades hunt (<span id="egv">0.05</span>)</label>
-  <input type="range" id="eg" min="0" max="100" value="5">
-  <button id="symEvade" style="margin-top:6px; width:100%">Make evasion symmetric</button>
+  <details class="grp"><summary>Evasion — the keystone</summary>
+    <label>Red evades hunt (<span id="erv">0.90</span>)</label>
+    <input type="range" id="er" min="0" max="100" value="90">
+    <label>Grey evades hunt (<span id="egv">0.05</span>)</label>
+    <input type="range" id="eg" min="0" max="100" value="5">
+    <button id="symEvade" style="margin-top:6px; width:100%">Make evasion symmetric</button>
+  </details>
 
   <label>Tool (click/drag on the surface)</label>
   <div class="row">
@@ -147,6 +162,22 @@
   drop a sparse scatter onto the current grid, or pick Marten in <b>Pen
   species</b> to place them by hand.</p>
 
+  <h3>Founding a population</h3>
+  <p>Martens breed only if another marten is adjacent (<b>Breeding needs a
+  mate</b>), and they die at a small <b>Background mortality</b> whatever their
+  energy — age, accidents, disease, the deaths an energy budget cannot express.
+  Together these mean a <i>single</i> marten founds nothing: it lives out its
+  life, eats a few neighbours, and dies. Drop <b>Release size</b> to 1 and watch
+  it fail; the greys win regardless. That is why the real programme moved dozens
+  of animals rather than one, and why the original goal was a <i>viable
+  population</i>, not a lone predator.</p>
+  <p>Two honest caveats. The threshold here is a hard step — 1 fails, 2 nearly
+  always succeeds — whereas real founder groups of two usually fail for reasons
+  this model has no notion of: finding a mate across a whole valley, dispersal,
+  roads, inbreeding. And because these martens cannot move, two released far
+  apart can never pair up at all, so <i>where</i> you release them does work
+  that roaming does in reality.</p>
+
   <h3>Evasion — why any of this works</h3>
   <p>Reds co-evolved with the marten and evade it; greys are North American,
   ground-naive, and mostly do not. That single asymmetry is the whole
@@ -174,10 +205,14 @@
   <p>Turning it on stops the boom-bust cycle: a subsidised marten does not
   starve when the greys thin out, so the greys never get their rebound and are
   wiped out completely rather than cycling. That matches Ireland, where greys
-  vanished from marten country. But push <b>Other food</b> past ~2 and the
+  vanished from marten country. But push <b>Other food</b> past ~2.5 and the
   martens take the reds down too — a predator propped up by other food has no
   reason to stop. Ecologists call this <b>hyperpredation</b>; it is how
   cats fed by introduced rabbits have exterminated island birds.</p>
+  <p>The default of 2.0 is exactly twice <b>δ</b>, and that is deliberate. A
+  marten shares its other food with its neighbours, so a <i>pair</i> gets
+  2.0/2 = δ and breaks even, while a trio gets 2.0/3 and starves. The pair is
+  the stable unit; any bigger group has to be paid for in squirrels.</p>
   <p>Now the strange one. Set <b>Other food</b> to 0 and raise <b>Red evades</b>
   to 0.95: the reds do <i>worse</i>, and the greys take over. With no other
   food, the marten lives only on squirrels — so reds that evade too well starve
@@ -215,7 +250,12 @@ let grid = new Uint8Array(COLS * ROWS);          // 0 empty, 1 red, 2 grey, 3 ma
 let energy = new Float32Array(COLS * ROWS);
 let params = { betaRed: 0.10, betaGrey: 0.14, sigma: 0.92,
                delta: 1.0, g: 3.0, eBreed: 10, e0: 5, breedCost: 5, eCap: 15, mu: 0.5,
-               evadeRed: 0.90, evadeGrey: 0.05, forage: 1.0, gen: 0 };
+               evadeRed: 0.90, evadeGrey: 0.05, forage: 2.0,
+               mate: true, mortality: 0.005, gen: 0 };
+// forage 2.0 = 2*delta is deliberate: a marten PAIR (forage/(1+1)) exactly breaks
+// even, a trio starves. With `mate` on, the pair is the stable unit and anything
+// larger has to be paid for with squirrels.
+let releaseSize = 40;
 let Cwrap = 'straight', Rwrap = 'straight';
 const TOPOS = { torus:['straight','straight'], klein:['flip','straight'],
                 mobius:['flip','none'], cylinder:['straight','none'] };
@@ -239,9 +279,18 @@ function randomize() {
 }
 function clearGrid() { grid.fill(0); energy = new Float32Array(COLS * ROWS); freshStart(); }
 function seedMartens() {
-  // drop a sparse scatter of martens across the grid (the small viable population)
-  for (let i = 0; i < grid.length; i++)
-    if (grid[i] !== STATES.MARTEN && Math.random() < 0.02) { grid[i] = STATES.MARTEN; energy[i] = params.e0 + 3; }
+  // A translocation releases a group at ONE site, so that is what this does. The old
+  // grid-wide scatter quietly begged the question: martens starting everywhere at once
+  // never have to found anything. Release site is random; the group is compact, which
+  // matters because martens cannot move — two released apart can never pair up.
+  const c0 = (Math.random() * COLS) | 0, r0 = (Math.random() * ROWS) | 0;
+  for (let rad = 0, placed = 0; placed < releaseSize && rad < Math.max(COLS, ROWS); rad++)
+    for (let dr = -rad; dr <= rad && placed < releaseSize; dr++)
+      for (let dc = -rad; dc <= rad && placed < releaseSize; dc++) {
+        if (Math.max(Math.abs(dr), Math.abs(dc)) !== rad) continue;   // just this ring
+        const i = idx((c0 + dc + COLS) % COLS, (r0 + dr + ROWS) % ROWS);
+        if (grid[i] !== STATES.MARTEN) { grid[i] = STATES.MARTEN; energy[i] = params.e0 + 3; placed++; }
+      }
   paint(); updateStatus();
 }
 function freshStart() { generation = 0; popHist.length = 0;
@@ -461,6 +510,9 @@ $('md').oninput  = e => { params.delta = +e.target.value/10;  $('dv').textConten
 $('meb').oninput = e => { params.eBreed = +e.target.value|0;  $('ebv').textContent = params.eBreed; };
 $('mmu').oninput = e => { params.mu    = +e.target.value/100; $('muv').textContent = params.mu.toFixed(2); };
 $('fo').oninput  = e => { params.forage = +e.target.value/10; $('fov').textContent = params.forage.toFixed(1); };
+$('mate').onchange = e => { params.mate = e.target.checked; };
+$('mo').oninput  = e => { params.mortality = +e.target.value/1000; $('mov').textContent = params.mortality.toFixed(3); };
+$('rs').oninput  = e => { releaseSize = +e.target.value; $('rsv').textContent = releaseSize; };
 $('er').oninput  = e => { params.evadeRed  = +e.target.value/100; $('erv').textContent = params.evadeRed.toFixed(2); };
 $('eg').oninput  = e => { params.evadeGrey = +e.target.value/100; $('egv').textContent = params.evadeGrey.toFixed(2); };
 // The control case in one click: same predator, same pressure, asymmetry removed.

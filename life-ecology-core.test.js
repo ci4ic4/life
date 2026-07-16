@@ -354,6 +354,97 @@ test('HYPERPREDATION: subsidised martens extirpate the greys instead of cycling 
   assert.strictEqual(greysAfter(1.0), 0, 'with alternative food the greys are extirpated');
 });
 
+// --- slice 5: founder viability (mate requirement + background mortality) ---
+
+test('mate=false / mortality=0 change nothing: slice 5 is off by default', () => {
+  const COLS = 20, ROWS = 20, N = COLS * ROWS;
+  const build = () => {
+    const rng = mulberry32(3);
+    const grid = new Uint8Array(N), energy = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      const r = rng();
+      if (r < 0.25) grid[i] = STATES.RED;
+      else if (r < 0.45) grid[i] = STATES.GREY;
+      else if (r < 0.60) { grid[i] = STATES.MARTEN; energy[i] = 12; }   // above eBreed
+    }
+    return { grid, energy };
+  };
+  const P = { betaRed: 0.1, betaGrey: 0.14, sigma: 0.92, delta: 1, g: 3, eBreed: 10, e0: 5,
+              breedCost: 5, eCap: 15, mu: 0.5, evadeRed: 0.9, evadeGrey: 0.05, forage: 1, gen: 5 };
+  const a = build(), b = build();
+  const outA = stepEcology(a.grid, a.energy, COLS, ROWS, 'straight', 'straight', { ...P }, mulberry32(9));
+  const outB = stepEcology(b.grid, b.energy, COLS, ROWS, 'straight', 'straight',
+                           { ...P, mate: false, mortality: 0 }, mulberry32(9));
+  assert.deepStrictEqual([...outB.grid], [...outA.grid], 'defaults must be identical to omitting them');
+  assert.deepStrictEqual([...outB.energy], [...outA.energy], 'energy must match too');
+});
+
+test('mate: a lone marten cannot breed however well fed; a paired one can', () => {
+  const COLS = 9, ROWS = 9, N = COLS * ROWS;
+  const at = (c, r) => r * COLS + c;
+  const P = { betaRed: 0, betaGrey: 0, sigma: 1, delta: 1, g: 3, eBreed: 10, e0: 5,
+              breedCost: 5, eCap: 100, mu: 1, forage: 0, evadeRed: 0, evadeGrey: 0, gen: 1 };
+  const martensAfter = (mate, paired) => {
+    const grid = new Uint8Array(N), energy = new Float32Array(N);
+    grid[at(4,4)] = STATES.MARTEN; energy[at(4,4)] = 50;      // far above eBreed
+    if (paired) { grid[at(5,4)] = STATES.MARTEN; energy[at(5,4)] = 50; }
+    // mu=1 -> any eligible neighbour breeds into an empty cell with certainty
+    const out = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight', { ...P, mate }, () => 0.5);
+    let n = 0; for (const v of out.grid) if (v === STATES.MARTEN) n++;
+    return n;
+  };
+  assert.ok(martensAfter(false, false) > 1, 'without the mate rule, one marten breeds alone (slice 4 behaviour)');
+  assert.strictEqual(martensAfter(true, false), 1, 'with the mate rule, a lone marten founds nothing');
+  assert.ok(martensAfter(true, true) > 2, 'with the mate rule, a pair does breed');
+});
+
+test('mate: the parent is not charged breedCost when it has no mate to breed with', () => {
+  // Parent and offspring must agree on eligibility, or a lone marten pays for a
+  // birth that never happens and slowly starves for nothing.
+  const COLS = 9, ROWS = 9, N = COLS * ROWS;
+  const at = (c, r) => r * COLS + c;
+  const grid = new Uint8Array(N), energy = new Float32Array(N);
+  grid[at(4,4)] = STATES.MARTEN; energy[at(4,4)] = 12;    // eligible on energy, but alone
+  const P = { betaRed: 0, betaGrey: 0, sigma: 1, delta: 1, g: 3, eBreed: 10, e0: 5,
+              breedCost: 5, eCap: 100, mu: 0.5, forage: 0, evadeRed: 0, evadeGrey: 0,
+              mate: true, gen: 1 };
+  const out = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight', P, () => 0.9);
+  assert.strictEqual(out.energy[at(4,4)], 12 - 1, 'lone marten pays delta only, not breedCost');
+});
+
+test('mortality: martens die at the background rate regardless of energy', () => {
+  const COLS = 40, ROWS = 40, N = COLS * ROWS;
+  const P = { betaRed: 0, betaGrey: 0, sigma: 1, delta: 0, g: 3, eBreed: 1000, e0: 5,
+              breedCost: 5, eCap: 100, mu: 0, forage: 0, evadeRed: 0, evadeGrey: 0,
+              mortality: 0.10, gen: 1 };
+  const grid = new Uint8Array(N), energy = new Float32Array(N);
+  for (let i = 0; i < N; i++) { grid[i] = STATES.MARTEN; energy[i] = 99; }  // delta=0, eBreed high: only mortality acts
+  const out = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight', P, mulberry32(5));
+  let alive = 0; for (const v of out.grid) if (v === STATES.MARTEN) alive++;
+  const died = (N - alive) / N;
+  assert.ok(Math.abs(died - 0.10) < 0.02, `~10% should die of background causes, got ${(died*100).toFixed(1)}%`);
+});
+
+test('mortality: without it a break-even marten is immortal, with it it is not', () => {
+  const COLS = 9, ROWS = 9, N = COLS * ROWS;
+  const at = (c, r) => r * COLS + c;
+  // forage exactly cancels delta -> the energy ledger can never kill this marten.
+  const P = { betaRed: 0, betaGrey: 0, sigma: 1, delta: 1, g: 3, eBreed: 100, e0: 5,
+              breedCost: 5, eCap: 15, mu: 0, forage: 1.0, evadeRed: 0, evadeGrey: 0, gen: 0 };
+  const survive = mortality => {
+    let grid = new Uint8Array(N), energy = new Float32Array(N);
+    grid[at(4,4)] = STATES.MARTEN; energy[at(4,4)] = 5;
+    const rng = mulberry32(2), params = { ...P, mortality };
+    for (let gen = 0; gen < 2000; gen++) {
+      params.gen = gen;
+      ({ grid, energy } = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight', params, rng));
+    }
+    return grid[at(4,4)] === STATES.MARTEN;
+  };
+  assert.strictEqual(survive(0), true, 'break-even marten never dies without background mortality');
+  assert.strictEqual(survive(0.005), false, 'with mortality it eventually does');
+});
+
 test('CASCADE control: symmetric evasion does NOT save the reds', () => {
   const { atIntro, final } = cascadeTrial({ evadeRed: 0.05, evadeGrey: 0.05 });
   assert.ok(final.grey < atIntro.grey * 0.9,
