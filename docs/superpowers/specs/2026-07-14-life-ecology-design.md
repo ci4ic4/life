@@ -239,6 +239,79 @@ gives red 1273 → 35952, grey 38889 → 0.
   than the forage competition radius** (a radius-2 read of `grid[]`; no
   arbitration needed, so it is cheap). Tuning papered over it for now.
 
+## Mechanic 6 — squirrelpox (slice 6)
+
+Greys carry squirrelpox and are barely troubled by it; in reds it is almost
+always fatal within a fortnight. Where it is present, grey replacement of reds
+runs an order of magnitude faster than competition alone can explain — the
+pathogen does the work, not the resource contest.
+
+```
+PREY cell that survived predation and the sigma roll:
+    if not a carrier:  catch it with prob 1-(1-poxBeta)^nInfectedPreyNeighbours
+    if a carrier and RED:   dies with prob poxLethal
+    if a carrier and GREY:  nothing happens — it carries it for life
+```
+
+Stored as a `Uint8Array` parallel to `grid`, the same shape as `energy` and as
+life-evolve's genes: infection is orthogonal to species, so folding it into
+`STATES` would scatter `=== RED` checks across every call site. That makes
+`infected` a third positional on `stepEcology` (28 call sites migrated; slice 2
+set the precedent when it added `energy`). `poxBeta = 0` is byte-identical to
+omitting it, so all 36 prior tests continue as the pox-free control. Both
+species transmit — reds do infect each other during an outbreak — but reds die
+too fast to sustain it, so the greys are the reservoir. No vertical
+transmission: newborns are clean and catch it by contact.
+
+**This is the second asymmetry, and it runs opposite to the first.** Evasion
+favours the reds; the pox favours the greys. Which one wins is the entire
+question — and it is the Ireland/Britain contrast.
+
+### The result: the marten wins the fight and loses the war
+
+Irish greys are largely pox-free, and **Ireland is precisely what slices 3–5
+reproduced.** Every earlier result was the easy version.
+
+| scenario | final red | final grey | carriers |
+|---|---|---|---|
+| pox-free, no martens | 0 | 6443 | — |
+| pox-free, martens | **5781** | 0 | — |
+| pox, no martens | 0 | 6424 | 5802 |
+| pox, martens | **0** | **0** | **0** |
+
+The martens are *not* failing. They still crash the greys to zero, and by
+destroying the reservoir they **wipe out the pox itself** — reproducing the real
+hypothesis that cutting grey density collapses SQPV transmission. They simply
+arrive too late: the epidemic sweeps in tens of ticks, martens need hundreds to
+spread, and **extinction is absorbing**. The rescue liberates an empty
+landscape. Reds hit zero at *every* release date tried, including releasing
+while 271 were still alive.
+
+### The threshold is transmission, not lethality
+
+Final reds, martens released at gen 300 (pox-free baseline 5866):
+
+| poxBeta | lethal 0.05 | 0.1 | 0.25 | 0.5 |
+|---|---|---|---|---|
+| 0.02 | 5811 | 5863 | 5835 | 5819 |
+| 0.10 | 4987 | 5834 | 6030 | **6053** |
+| 0.15 | 5829 | **0** | **0** | **0** |
+| 0.25 | **0** | **0** | **0** | **0** |
+
+The cliff is between 0.10 and 0.15 and is nearly vertical. And along the 0.10
+row, **raising lethality saves more reds**: a pathogen that kills in two ticks
+has two ticks to transmit, one that lets its host linger has twenty, so the
+deadlier strain burns itself out. That is the virulence–transmission trade-off,
+emergent from two lines of rules.
+
+### The caveat that now matters most
+
+This torus has **nowhere to hide**. Real reds persist in refuges — islands,
+Scottish strongholds, conifer plantations greys do poorly in — and that is what
+keeps them alive long enough for help to arrive. Terrain was dropped in slice 1
+as unnecessary. The pox has made it load-bearing, and the model consequently
+states the case more bleakly than reality. **Refuges are the next slice.**
+
 ## How well does this correspond to the real world?
 
 Recorded after slice 3, since it is the question the whole exercise is meant to
@@ -258,17 +331,19 @@ story is interesting in the first place.
    the biggest gap and it was not a 2-line fix: a flat food term is
    algebraically just a lower `δ`, so the food had to become a *shared* resource
    to add any dynamics at all.
-2. **No squirrelpox** — arguably the most significant ecological omission.
-   Greys carry a virus lethal to reds and largely harmless to themselves; it is
-   a major driver of the real red decline. Here the grey advantage is birth rate
-   *alone*, which understates how the invasion actually works.
+2. ~~**No squirrelpox**~~ — **CLOSED in slice 6**, see Mechanic 6. It was the
+   most significant omission, and closing it revealed that every earlier slice
+   had been modelling Ireland (pox-free) while describing Britain.
 3. **Martens are stationary**, spreading only by breeding. Real martens roam
    large territories — a deliberate trade to avoid synchronous-CA movement
    arbitration (see Mechanic 2). **This is now the load-bearing simplification**:
    slice 5 needs martens adjacent to breed while Mechanic 4 needs them apart to
    eat, and roaming is what resolves that in reality. See Mechanic 5.
 4. **No habitat structure.** Reds do better in conifer, greys in broadleaf;
-   terrain was dropped in slice 1.
+   terrain was dropped in slice 1. **Slice 6 promoted this to the top of the
+   list**: with squirrelpox present and nowhere to hide, the reds have no refuge
+   to outlast the epidemic in, so the model states the case more bleakly than
+   reality. Refuges are the obvious next slice.
 5. **Timescale and patchiness.** Reds here recover almost everywhere within
    ~200 generations. The real recovery is patchy, contested, and takes decades.
 
