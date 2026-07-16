@@ -160,12 +160,64 @@ Sliders, like the existing files. Everything else held fixed.
 - **Slice 3 — asymmetric evasion (keystone).** Split prey back to RED/GREY, add
   `evade_red ≫ evade_grey`, add a **"Reintroduce martens"** button. *Payoff:*
   toggle martens on → greys crash → reds recover. The whole point, in one click.
-- **Slice 4 — instrumentation.** 3-line population chart (red/grey/marten over
-  time — the cascade money-shot) + adapt the headless search harness to
-  auto-hunt parameter sets where reds actually recover.
+
+  **Slice-3 outcome (2026-07-16): CASCADE CONFIRMED.** At `evade_red` 0.70 /
+  `evade_grey` 0.05, martens introduced at gen 300 into a near-extinct red
+  population (70 left): red → 1307, grey 1548 → 180 (87.9% red share). Asserted
+  headlessly both directions, and reproduced in the shell at 80×40 unseeded.
+
+  **The symmetric control is the real result.** With `evade_red = evade_grey`
+  — same predator, same pressure, asymmetry removed — martens still crash the
+  greys (1548 → 508) but **reds go extinct anyway**. A generalist predator does
+  not save the native; it harvests both. Predation is not the cause, the
+  asymmetry is. Exposed in the UI as *Make evasion symmetric* (one click).
+
+  **Emergent, not coded:** marten density becomes grey-driven. Hunting an
+  evading red usually wastes the turn, so martens can only sustain on greys →
+  marten count tracks grey count → greys rebound as martens fade → a
+  predator-prey limit cycle falls out of the evade rule alone.
+- **Slice 4 — candidates, not yet chosen.** Alternative marten food (gap 1
+  below) · squirrelpox (gap 2) · chart polish · GPU port (the two-phase rule
+  needs an intent texture).
 
 Each slice: build → self-test (Node core-extract asserts) → visual verify
 (playwright) → evaluate with the user before the next.
+
+## How well does this correspond to the real world?
+
+Recorded after slice 3, since it is the question the whole exercise is meant to
+answer. Honest answer: **the mechanism is right, the ecology around it is thin.**
+
+**What matches.** Marten recovery suppressing greys and releasing reds is the
+real observed effect (Sheehy & Lawton in Ireland; Vincent Wildlife Trust in
+Wales/Scotland). Grey ground-naivety vs red co-evolution is the leading
+mechanistic hypothesis, and it is exactly what this model encodes. The
+symmetric control — predator alone is *not* enough — is a genuine prediction of
+the model rather than something built into it, and it is the reason the marten
+story is interesting in the first place.
+
+**What does not.**
+
+1. **No alternative marten food** — the biggest gap. Real martens are
+   generalists (voles, birds, berries, carrion), so their numbers do not depend
+   on squirrels and they hold greys down *steadily*. Ours eat only squirrels, so
+   martens crash when greys crash and greys rebound — the limit cycle is partly
+   an artifact of that missing food term. Cheapest fix: a small background feed
+   per tick (~2 lines).
+2. **No squirrelpox** — arguably the most significant ecological omission.
+   Greys carry a virus lethal to reds and largely harmless to themselves; it is
+   a major driver of the real red decline. Here the grey advantage is birth rate
+   *alone*, which understates how the invasion actually works.
+3. **Martens are stationary**, spreading only by breeding. Real martens roam
+   large territories — a deliberate trade to avoid synchronous-CA movement
+   arbitration (see Mechanic 2).
+4. **No habitat structure.** Reds do better in conifer, greys in broadleaf;
+   terrain was dropped in slice 1.
+5. **Timescale and patchiness.** Reds here recover almost everywhere within
+   ~200 generations. The real recovery is patchy, contested, and takes decades.
+
+So: good enough to demonstrate *why* the marten works, and specifically why a
+non-selective predator would not. Not a forecasting tool.
 
 ## Visual design
 
