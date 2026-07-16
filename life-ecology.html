@@ -401,8 +401,12 @@ function setPen(i, v) {
 dom.addEventListener('pointerdown', e => {
   if (tool !== 'pen' || e.button !== 0) return;
   const cell = cellAt(e); if (!cell) return;
-  paintVal = grid[idx(cell[0], cell[1])] ? STATES.EMPTY : penSpec;   // first cell draw/erase
-  setPen(idx(cell[0], cell[1]), paintVal); painting = true; paint(); updateStatus();
+  // Toggle against the SELECTED species, not "is anything here" (which is what a
+  // 2-state Life wants). On a saturated grid nearly every click lands on some prey,
+  // so the old test erased instead of painting whatever species was picked.
+  const first = idx(cell[0], cell[1]);
+  paintVal = grid[first] === penSpec ? STATES.EMPTY : penSpec;   // same species = erase, else paint
+  setPen(first, paintVal); painting = true; paint(); updateStatus();
 });
 dom.addEventListener('pointermove', e => {
   if (!painting) return; const cell = cellAt(e); if (!cell) return;
