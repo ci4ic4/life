@@ -183,6 +183,62 @@ Sliders, like the existing files. Everything else held fixed.
 Each slice: build → self-test (Node core-extract asserts) → visual verify
 (playwright) → evaluate with the user before the next.
 
+## Mechanic 5 — founder viability (slice 5)
+
+Reported from a 300×150 run: let the greys take over, add a **single** marten,
+and it reconquers the entire torus (red 1059 → 36218, grey 39050 → 0). That is
+not a reintroduction, it is a magic seed. Three causes:
+
+1. **Asexual budding** — one marten breeds alone into an empty neighbour.
+2. **`forage = 1.0` against `delta = 1.0`** put an isolated marten at net drift
+   *exactly* zero: it could not starve, age, or die. Verified immortal over 5000
+   generations with energy frozen at 5.0. A default chosen to match Ireland that
+   happened to land on the cancellation point.
+3. **Death came only from the energy ledger**, so small founder groups never
+   failed by luck.
+
+```
+MARTEN cell:
+    background mortality: rng() < mortality  ->  EMPTY   (age/accident/disease)
+    breeding eligibility requires, as well as energy >= E_breed:
+        `mate` -> at least one adjacent MARTEN
+```
+
+Both default **off** in the core, so slices 1–4 remain valid as the
+no-constraint control. Eligibility is precomputed once into `canBreed[]` because
+the parent (which pays `breedCost`) and the empty cell (which counts eligible
+neighbours) must agree — otherwise a lone marten pays for a birth that never
+happens.
+
+### The mate rule invalidated slice 4's tuning
+
+Adjacency is what lets a marten breed *and* what halves its forage. At
+`forage = 1.0` a pair nets −0.5/tick: lone martens break even but cannot breed,
+pairs can breed but starve. The population collapses to ~40 scattered singletons
+at *every* founder size from 1 to 64, and the cascade dies entirely. A pair needs
+`forage ≥ 2·delta`, and the re-sweep put the cliff exactly there. Hence
+**`forage = 2.0`, `mortality = 0.005`** — a pair breaks even, a trio starves, so
+the **pair is the stable social unit** and anything larger must be paid for in
+squirrels.
+
+Founder sweep, 100×50, 8 runs each: **1 → 0/8, 2 and above → 8/8.** At 300×150,
+releasing 1 gives red 1215 → 0 with the greys taking everything; releasing 40
+gives red 1273 → 35952, grey 38889 → 0.
+
+### What is still wrong
+
+- The threshold is a **hard step**, not a graded risk curve. A real founder pair
+  usually fails — mate-finding across a valley, dispersal, roads, inbreeding —
+  none of which exist here. "You need a breeding pair" is less wrong than "you
+  need one animal", but it is not the real risk profile.
+- **Stationarity artifact:** two martens released apart can never pair, so
+  release *geometry* does the work that roaming does in reality. Mechanic 4
+  (shared forage) encodes territoriality — keep apart — while Mechanic 5 encodes
+  proximity. Those are physically contradictory, and roaming is the real
+  resolution. If it ever matters, the clean fix is a **mate search radius larger
+  than the forage competition radius** (a radius-2 read of `grid[]`; no
+  arbitration needed, so it is cheap). Tuning papered over it for now.
+
 ## How well does this correspond to the real world?
 
 Recorded after slice 3, since it is the question the whole exercise is meant to
@@ -208,7 +264,9 @@ story is interesting in the first place.
    *alone*, which understates how the invasion actually works.
 3. **Martens are stationary**, spreading only by breeding. Real martens roam
    large territories — a deliberate trade to avoid synchronous-CA movement
-   arbitration (see Mechanic 2).
+   arbitration (see Mechanic 2). **This is now the load-bearing simplification**:
+   slice 5 needs martens adjacent to breed while Mechanic 4 needs them apart to
+   eat, and roaming is what resolves that in reality. See Mechanic 5.
 4. **No habitat structure.** Reds do better in conifer, greys in broadleaf;
    terrain was dropped in slice 1.
 5. **Timescale and patchiness.** Reds here recover almost everywhere within
@@ -253,6 +311,11 @@ shape as cats subsidised by introduced rabbits exterminating island birds.
 1235). With no other food the marten lives *only* on squirrels, so reds that
 evade too well starve the predator that is protecting them. Unsubsidised, the
 reds must feed their own bodyguard.
+
+> **Superseded by slice 5.** `forage = 1.0` was tuned *before* the mate
+> requirement existed and sits exactly on `delta`, which made an isolated marten
+> immortal. The default is now **2.0**; hyperpredation starts nearer 2.5. The
+> reasoning below still holds, the numbers moved.
 
 **Neither gap closed alone.** `forage=0, evade=0.90` → greys win.
 `forage=1.0, evade=0.70` → greys gone, reds mediocre (623). Only both together
