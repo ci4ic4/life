@@ -91,6 +91,8 @@
     <button id="rand">Random</button>
     <button id="clear">Clear</button>
   </div>
+  <label style="display:flex; align-items:center; gap:6px; margin-top:6px">
+    <input type="checkbox" id="gpu" style="width:auto"> GPU step (WebGL2)</label>
 
   <label>Speed (<span id="spd">10</span> gen/s)</label>
   <input type="range" id="speed" min="1" max="60" value="10">
@@ -98,7 +100,7 @@
   <label>Density on Random (<span id="densv">0.30</span>)</label>
   <input type="range" id="dens" min="0" max="100" value="30">
 
-  <label>Grid size (cols × rows, 20–300)</label>
+  <label id="sizeLbl">Grid size (cols × rows, 20–300)</label>
   <div class="row">
     <input type="number" id="cols" value="80" min="20" max="300">
     <input type="number" id="rows" value="40" min="20" max="300">
@@ -174,6 +176,7 @@
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script src="life-stats.js"></script>
+<script src="life-gpu.js"></script>
 <script>
 // ---- grid / simulation ------------------------------------------------------
 let COLS = 80, ROWS = 40;              // N (around tube) x M (around ring); mutable via Apply
@@ -224,22 +227,31 @@ function parseRule(str) {
 }
 
 function step() {
-  grid = LifeStats.stepGrid(grid, COLS, ROWS, Cwrap, Rwrap, pBirth, pSurvive, Math.random);
+  if (GPU.enabled) GPU.step();
+  else grid = LifeStats.stepGrid(grid, COLS, ROWS, Cwrap, Rwrap, pBirth, pSurvive, Math.random);
   generation++;
   paint();
-  updateStatus();
+  if (!GPU.enabled) { updateStatus(); return; }
+  // GPU mode: display never touches the CPU; the pop/stability badge needs a
+  // readback, so sample every 4th generation (the 50-sample window just spans
+  // 200 gens instead of 50 — same classification, cheaper hot path).
+  if (generation % 4 === 0) { GPU.syncToCPU(); updateStatus(); }
+  else document.getElementById('gen').textContent = generation;
 }
 
 function randomize() {
   const d = +document.getElementById('dens').value / 100;
   for (let i = 0; i < grid.length; i++) grid[i] = Math.random() < d ? 1 : 0;
+  GPU.markDirty();
   freshStart();
 }
-function clearGrid() { grid.fill(0); freshStart(); }
+function clearGrid() { grid.fill(0); GPU.markDirty(); freshStart(); }
 
 function stampGliderAt(c0, r0) {
+  if (GPU.enabled) GPU.syncToCPU();   // merge the glider onto live state, not a stale snapshot
   const cells = [[1,0],[2,1],[0,2],[1,2],[2,2]];
   for (const [dc, dr] of cells) grid[idx((c0+dc+COLS) % COLS, (r0+dr+ROWS) % ROWS)] = 1;
+  GPU.markDirty();
   paint(); updateStatus();
 }
 
@@ -308,6 +320,7 @@ let tex = new THREE.DataTexture(texData, COLS, ROWS, THREE.RGBAFormat);
 tex.magFilter = tex.minFilter = THREE.NearestFilter;  // crisp cells, no blur
 
 function paint() {
+  if (GPU.enabled) { GPU.refresh(); return; }   // colour on the GPU, straight into the torus map
   for (let i = 0; i < grid.length; i++) {
     const on = grid[i];
     texData[i*4+0] = on ? 255 : 26;   // amber P3 phosphor (#ffb000) for the 3270 nod
@@ -316,6 +329,12 @@ function paint() {
     texData[i*4+3] = 255;
   }
   tex.needsUpdate = true;
+}
+// Point the torus/plane at the GPU colour target when GPU is on, the CPU DataTexture otherwise.
+function updateDisplayMap() {
+  const m = (GPU.enabled && GPU.colorTexture) ? GPU.colorTexture : tex;
+  torus.material.map = m; torus.material.needsUpdate = true;
+  plane.material.map = m; plane.material.needsUpdate = true;
 }
 
 const torus = new THREE.Mesh(
@@ -332,6 +351,62 @@ const plane = new THREE.Mesh(
 );
 plane.visible = false;
 scene.add(plane);
+
+// ---- GPU acceleration (shared life-gpu.js harness) --------------------------
+// State texel: R = grid 0/1. The rule is the two 9-entry probability tables
+// (LifeStats.curve output) as uniforms; the coin-flip uses an in-shader hash PRNG
+// (a different random stream than Math.random — irrelevant for a stochastic rule;
+// at the deterministic limit σ→0/floor 0/ceil 1 both paths agree exactly).
+const STOCH_SIM_FRAG = `#version 300 es
+precision highp float; precision highp int;
+uniform sampler2D uState, uEnv;
+uniform int uCols,uRows,uCwrap,uRwrap;
+uniform float uPB[9], uPS[9];
+uniform uint uGen;
+out vec4 o;
+uint hash(uint x){ x^=x>>16; x*=0x7feb352du; x^=x>>15; x*=0x846ca68bu; x^=x>>16; return x; }
+float rnd(int c,int r){ uint h=hash(uint(c)*1973u ^ uint(r)*9277u ^ uGen*26699u); return float(h)*(1.0/4294967296.0); }
+bool resolveC(inout int nc, inout int nr){
+  if(nc<0||nc>=uCols){ if(uCwrap==2) return false; if(uCwrap==1) nr=uRows-1-nr; nc=(nc+uCols)%uCols; }
+  if(nr<0||nr>=uRows){ if(uRwrap==2) return false; if(uRwrap==1) nc=uCols-1-nc; nr=(nr+uRows)%uRows; }
+  return true;
+}
+void main(){
+  int c=int(gl_FragCoord.x), r=int(gl_FragCoord.y);
+  int n=0;
+  for(int dr=-1;dr<=1;dr++) for(int dc=-1;dc<=1;dc++){
+    if(dr==0&&dc==0) continue;
+    int nc=c+dc, nr=r+dr; if(!resolveC(nc,nr)) continue;
+    if(texelFetch(uState, ivec2(nc,nr),0).r>0.5) n++;
+  }
+  bool alive=texelFetch(uState, ivec2(c,r),0).r>0.5;
+  float p = alive ? uPS[n] : uPB[n];
+  o = vec4(rnd(c,r)<p ? 1.0 : 0.0, 0.0, 0.0, 0.0);
+}`;
+// Colour pass: the amber P3 phosphor on/off ramp from paint().
+const STOCH_COLOR_FRAG = `#version 300 es
+precision highp float; precision highp int;
+uniform sampler2D uState, uEnv;
+out vec4 o;
+void main(){
+  bool on = texelFetch(uState, ivec2(int(gl_FragCoord.x),int(gl_FragCoord.y)),0).r > 0.5;
+  o = on ? vec4(1.0, 176.0/255.0, 0.0, 1.0) : vec4(26.0/255.0, 18.0/255.0, 8.0/255.0, 1.0);
+}`;
+const CW = { straight: 0, flip: 1, none: 2 };
+const GPU = LifeGPU.create(renderer, {
+  getSize: () => [COLS, ROWS],
+  hasEnv: false,
+  simFrag: STOCH_SIM_FRAG,
+  colorFrag: STOCH_COLOR_FRAG,
+  packState(b, W, H) { for (let i = 0; i < W * H; i++) b[i*4] = grid[i]; },
+  unpackState(b, W, H) { for (let i = 0; i < W * H; i++) grid[i] = Math.round(b[i*4]); },
+  setSimUniforms(u, W, H) {
+    u.i1('uCols', W); u.i1('uRows', H);
+    u.i1('uCwrap', CW[Cwrap]); u.i1('uRwrap', CW[Rwrap]);
+    u.ui1('uGen', generation >>> 0);
+    u.f1v('uPB', new Float32Array(pBirth)); u.f1v('uPS', new Float32Array(pSurvive));
+  },
+});
 
 // ---- timing loop ------------------------------------------------------------
 let playing = false, acc = 0, last = performance.now(), gps = 10;
@@ -388,14 +463,17 @@ dom.addEventListener('pointerdown', e => {
   downXY = [e.clientX, e.clientY];
   if (tool !== 'pen' || e.button !== 0) return;     // left paints; right/mid -> pan
   const cell = cellAt(e); if (!cell) return;
+  if (GPU.enabled) GPU.syncToCPU();   // pull live state so the erase/draw toggle + merge see it
   paintVal = grid[idx(cell[0], cell[1])] ? 0 : 1;  // first cell decides draw vs erase
   grid[idx(cell[0], cell[1])] = paintVal;
+  GPU.markDirty();
   painting = true; paint(); updateStatus();
 });
 dom.addEventListener('pointermove', e => {
   if (!painting) return;
   const cell = cellAt(e); if (!cell) return;
   grid[idx(cell[0], cell[1])] = paintVal;
+  GPU.markDirty();
   paint(); updateStatus();
 });
 dom.addEventListener('pointerup', e => {
@@ -415,17 +493,22 @@ function rebuild(c, r) {
   tex.dispose();
   tex = new THREE.DataTexture(texData, COLS, ROWS, THREE.RGBAFormat);
   tex.magFilter = tex.minFilter = THREE.NearestFilter;
+  // Cap display-mesh segments: the texture already carries per-cell detail, so we
+  // don't need a vertex per cell once grids get large (keeps the geometry cheap).
+  const segC = Math.min(COLS, 512), segR = Math.min(ROWS, 512);
   torus.geometry.dispose();
-  torus.geometry = new THREE.TorusGeometry(3, 1.3, ROWS, COLS);
+  torus.geometry = new THREE.TorusGeometry(3, 1.3, segR, segC);
   torus.material.map = tex; torus.material.needsUpdate = true;
   plane.geometry.dispose();
   plane.geometry = new THREE.PlaneGeometry(8, 8 * ROWS / COLS);
   plane.material.map = tex; plane.material.needsUpdate = true;
+  GPU.resize(); updateDisplayMap();   // rebuild GPU textures + colour target at the new size
   freshStart();
 }
 $('apply').onclick = () => {
-  const c = Math.max(20, Math.min(300, +$('cols').value | 0));
-  const r = Math.max(20, Math.min(300, +$('rows').value | 0));
+  const cap = GPU.available ? 2048 : 300;
+  const c = Math.max(20, Math.min(cap, +$('cols').value | 0));
+  const r = Math.max(20, Math.min(cap, +$('rows').value | 0));
   $('cols').value = c; $('rows').value = r;
   rebuild(c, r);
   randomize();                                       // give the new grid something to show
@@ -535,7 +618,47 @@ function selfTest() {
 }
 
 // ---- boot -------------------------------------------------------------------
+// Verify the GPU step at the deterministic limit: σ tiny + floor 0 + ceil 1 makes
+// every probability exactly 0 or 1, so the coin-flip degenerates and the GPU must
+// match LifeStats.stepGrid bit-for-bit despite the different RNG streams.
+function gpuSelfTest() {
+  if (!GPU.available) return;
+  const save = { g: grid, b: birth, s: survive, bp: {...bParm}, sp: {...sParm},
+                 cw: Cwrap, rw: Rwrap, gen: generation, en: GPU.enabled };
+  birth = new Set([3]); survive = new Set([2, 3]); [Cwrap, Rwrap] = TOPOS.torus;
+  Object.assign(bParm, { sigma: 0.05, ceil: 1, floor: 0 });
+  Object.assign(sParm, { sigma: 0.05, ceil: 1, floor: 0 });
+  LifeStats.curve(birth, bParm, pBirth); LifeStats.curve(survive, sParm, pSurvive);
+  grid = new Uint8Array(COLS * ROWS);
+  // glider + blinker + block: births, survivals, deaths all exercised
+  for (const [c, r] of [[6,5],[7,6],[5,7],[6,7],[7,7],  [20,10],[20,11],[20,12],  [30,20],[31,20],[30,21],[31,21]])
+    grid[idx(c, r)] = 1;
+  const ref = LifeStats.stepGrid(grid, COLS, ROWS, Cwrap, Rwrap, pBirth, pSurvive, () => 0.5);
+  GPU.enabled = true; GPU.markDirty(); generation = 0;
+  GPU.step(); GPU.syncToCPU();
+  let bad = 0;
+  for (let i = 0; i < grid.length; i++) if (grid[i] !== ref[i]) bad++;
+  console.assert(bad === 0, `GPU step: deterministic limit matches stepGrid (mismatches=${bad})`);
+  if (bad === 0) console.log('GPU stochastic step verified at the deterministic limit.');
+  grid = save.g; birth = save.b; survive = save.s;
+  Object.assign(bParm, save.bp); Object.assign(sParm, save.sp); buildTables();
+  Cwrap = save.cw; Rwrap = save.rw; generation = save.gen;
+  GPU.enabled = save.en; GPU.markDirty();
+}
+
+$('gpu').disabled = !GPU.available;
+$('gpu').checked = GPU.enabled = GPU.available;   // default to GPU when supported
+$('gpu').onchange = e => {
+  if (!e.target.checked && GPU.enabled) GPU.syncToCPU();   // hand live state back to the CPU path
+  GPU.enabled = e.target.checked;
+  GPU.markDirty();
+  updateDisplayMap(); paint();
+};
+if (GPU.available) { $('cols').max = $('rows').max = 2048; $('sizeLbl').textContent = 'Grid size (cols × rows, 20–2048 · GPU)'; }
+
 selfTest();
+gpuSelfTest();
+updateDisplayMap();
 parseRule('B3/S23');
 buildTables();
 randomize();

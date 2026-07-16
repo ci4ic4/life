@@ -91,6 +91,8 @@
     <button id="rand">Random</button>
     <button id="clear">Clear</button>
   </div>
+  <label style="display:flex; align-items:center; gap:6px; margin-top:6px">
+    <input type="checkbox" id="gpu" style="width:auto"> GPU step (WebGL2)</label>
 
   <label>Speed (<span id="spd">10</span> gen/s)</label>
   <input type="range" id="speed" min="1" max="60" value="10">
@@ -98,7 +100,7 @@
   <label>Density on Random (<span id="densv">0.30</span>)</label>
   <input type="range" id="dens" min="0" max="100" value="30">
 
-  <label>Grid size (cols × rows, 20–300)</label>
+  <label id="sizeLbl">Grid size (cols × rows, 20–300)</label>
   <div class="row">
     <input type="number" id="cols" value="80" min="20" max="300">
     <input type="number" id="rows" value="40" min="20" max="300">
@@ -180,6 +182,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="life-gpu.js"></script>
 <script>
 // ---- grid / simulation ------------------------------------------------------
 let COLS = 80, ROWS = 40;              // N (around tube) x M (around ring); mutable via Apply
@@ -318,16 +321,32 @@ function computeNext() {
 }
 
 function step() {
-  grid = computeNext();
+  // ponytail: GPU mode still reads the grid back every generation — detect() needs
+  // the exact state each gen (throttled sampling would misreport loop periods). The
+  // GPU win here is the neighbour loop + colouring; drop to a GPU hash reduction if
+  // huge grids ever need detection to go readback-free.
+  if (GPU.enabled) { GPU.step(); GPU.syncToCPU(); }
+  else grid = computeNext();
   generation++;
   detect();
   paint();
   updateStatus();
 }
 
+// Double 32-bit FNV-1a over the raw bytes (two primes), plus the population, as the
+// state key: constant-size keys at any grid size (join('') built megabyte strings),
+// collision odds ~2^-64 per pair.
+function gridKey() {
+  let h1 = 0x811c9dc5, h2 = 0xcbf29ce4, pop = 0;
+  for (let i = 0; i < grid.length; i++) {
+    const v = grid[i]; pop += v ? 1 : 0;
+    h1 = Math.imul(h1 ^ v, 16777619) >>> 0;
+    h2 = Math.imul(h2 ^ v, 216613629) >>> 0;
+  }
+  return `${h1}:${h2}:${pop}`;
+}
 function detect() {
-  // ponytail: hash = raw bytes joined. fine to ~200x200; swap to a rolling hash if huge.
-  const h = grid.join('');
+  const h = gridKey();
   if (seen.has(h)) {
     const period = generation - seen.get(h);
     halted = true;
@@ -345,15 +364,17 @@ function randomize() {
   const d = +document.getElementById('dens').value / 100;
   for (let i = 0; i < grid.length; i++)
     grid[i] = Math.random() < d ? 1 + (Math.random() * NTYPES | 0) : 0;
+  GPU.markDirty();
   freshStart();
 }
-function clearGrid() { grid.fill(0); freshStart(); }
+function clearGrid() { grid.fill(0); GPU.markDirty(); freshStart(); }
 
 // Standard Conway glider (B3/S23). Travels diagonally; stamped near the right side
 // so it reaches the C seam in a few gens — switch to 2D to watch it wrap/flip.
 function stampGliderAt(c0, r0) {
   const cells = [[1,0],[2,1],[0,2],[1,2],[2,2]];
   for (const [dc, dr] of cells) grid[idx((c0+dc+COLS) % COLS, (r0+dr+ROWS) % ROWS)] = penType;
+  GPU.markDirty();      // grid is already CPU-fresh (step syncs every gen); just re-upload
   editPoke();                                   // mid-run edit -> reset detection, allow play
   paint(); updateStatus();
 }
@@ -396,6 +417,7 @@ tex.magFilter = tex.minFilter = THREE.NearestFilter;  // crisp cells, no blur
 
 const DEAD_RGB = [26, 18, 8];         // amber P3 phosphor background for the 3270 nod
 function paint() {
+  if (GPU.enabled) { GPU.refresh(); return; }   // colour on the GPU, straight into the torus map
   for (let i = 0; i < grid.length; i++) {
     const v = grid[i];
     const rgb = v ? TYPES[v-1].rgb : DEAD_RGB;
@@ -405,6 +427,12 @@ function paint() {
     texData[i*4+3] = 255;
   }
   tex.needsUpdate = true;
+}
+// Point the torus/plane at the GPU colour target when GPU is on, the CPU DataTexture otherwise.
+function updateDisplayMap() {
+  const m = (GPU.enabled && GPU.colorTexture) ? GPU.colorTexture : tex;
+  torus.material.map = m; torus.material.needsUpdate = true;
+  plane.material.map = m; plane.material.needsUpdate = true;
 }
 
 const torus = new THREE.Mesh(
@@ -422,6 +450,94 @@ const plane = new THREE.Mesh(
 );
 plane.visible = false;
 scene.add(plane);
+
+// ---- GPU acceleration (shared life-gpu.js harness) --------------------------
+// State texel: R = type 0..6. Faithful GLSL port of computeNext(): per-type
+// weighted tally, signed allies−foes test for both birth and survival, newborn =
+// majority type of the winning clan, tied majority births nothing. Types alternate
+// clans (odd = warm/0, even = cool/1), so clan = (t−1)&1 needs no upload.
+const TORUS_SIM_FRAG = `#version 300 es
+precision highp float; precision highp int;
+uniform sampler2D uState, uEnv;
+uniform int uCols,uRows,uCwrap,uRwrap,uRanged,uNTypes;
+uniform float uKernel[25], uBirth[9], uSurvive[9];
+uniform float uBLo,uBHi,uSLo,uSHi;
+out vec4 o;
+bool resolveC(inout int nc, inout int nr){
+  if(nc<0||nc>=uCols){ if(uCwrap==2) return false; if(uCwrap==1) nr=uRows-1-nr; nc=(nc+uCols)%uCols; }
+  if(nr<0||nr>=uRows){ if(uRwrap==2) return false; if(uRwrap==1) nc=uCols-1-nc; nr=(nr+uRows)%uRows; }
+  return true;
+}
+bool birthOK(float n){ if(uRanged==1) return n>=uBLo && n<=uBHi; float k=floor(n+0.5); if(k<0.0||k>8.0) return false; return uBirth[int(k)]>0.5; }
+bool surviveOK(float s){ if(uRanged==1) return s>=uSLo && s<=uSHi; float k=floor(s+0.5); if(k<0.0||k>8.0) return false; return uSurvive[int(k)]>0.5; }
+void main(){
+  int c=int(gl_FragCoord.x), r=int(gl_FragCoord.y);
+  float cnt[7];
+  for(int t=0;t<7;t++) cnt[t]=0.0;
+  for(int dr=-2;dr<=2;dr++) for(int dc=-2;dc<=2;dc++){
+    float w=uKernel[(dr+2)*5+(dc+2)]; if(w==0.0) continue;
+    int nc=c+dc, nr=r+dr; if(!resolveC(nc,nr)) continue;
+    int v=int(texelFetch(uState, ivec2(nc,nr),0).r+0.5);
+    if(v>0) cnt[v]+=w;
+  }
+  float c0=0.0,c1=0.0;
+  for(int t=1;t<7;t++){ if(t>uNTypes) break; if(((t-1)&1)==0) c0+=cnt[t]; else c1+=cnt[t]; }
+  int alive=int(texelFetch(uState, ivec2(c,r),0).r+0.5);
+  if(alive>0){
+    float s = (((alive-1)&1)==0) ? c0-c1 : c1-c0;   // allies minus foes
+    o = vec4(surviveOK(s) ? float(alive) : 0.0, 0.0, 0.0, 0.0);
+  } else {
+    float s0=c0-c1;
+    bool b0=birthOK(s0)&&c0>0.0;
+    bool b1=birthOK(-s0)&&c1>0.0;
+    float res=0.0;
+    if(b0!=b1){
+      int k=b0?0:1;                                  // newborn = majority type of the
+      int best=0; float bestN=0.0; bool tie=false;   // winning clan; tie -> no birth
+      for(int t=1;t<7;t++){
+        if(t>uNTypes) break;
+        if(((t-1)&1)!=k) continue;
+        if(cnt[t]>bestN){ best=t; bestN=cnt[t]; tie=false; }
+        else if(cnt[t]==bestN && bestN>0.0) tie=true;
+      }
+      res = tie ? 0.0 : float(best);
+    }
+    o=vec4(res,0.0,0.0,0.0);
+  }
+}`;
+// Colour pass: palette lookup — uPal[0] = dead phosphor, uPal[1..6] = TYPES colours.
+const TORUS_COLOR_FRAG = `#version 300 es
+precision highp float; precision highp int;
+uniform sampler2D uState, uEnv;
+uniform vec3 uPal[7];
+out vec4 o;
+void main(){
+  int v = int(texelFetch(uState, ivec2(int(gl_FragCoord.x),int(gl_FragCoord.y)),0).r+0.5);
+  o = vec4(uPal[v], 1.0);
+}`;
+const CW = { straight: 0, flip: 1, none: 2 };
+const PALETTE = new Float32Array(21);
+[DEAD_RGB, ...TYPES.map(t => t.rgb)].forEach((rgb, i) => rgb.forEach((v, k) => PALETTE[i*3+k] = v / 255));
+const GPU = LifeGPU.create(renderer, {
+  getSize: () => [COLS, ROWS],
+  hasEnv: false,
+  simFrag: TORUS_SIM_FRAG,
+  colorFrag: TORUS_COLOR_FRAG,
+  packState(b, W, H) { for (let i = 0; i < W * H; i++) b[i*4] = grid[i]; },
+  unpackState(b, W, H) { for (let i = 0; i < W * H; i++) grid[i] = Math.round(b[i*4]); },
+  setSimUniforms(u, W, H) {
+    u.i1('uCols', W); u.i1('uRows', H);
+    u.i1('uCwrap', CW[Cwrap]); u.i1('uRwrap', CW[Rwrap]);
+    u.i1('uRanged', rangedMode ? 1 : 0); u.i1('uNTypes', NTYPES);
+    u.f1('uBLo', bLo); u.f1('uBHi', bHi); u.f1('uSLo', sLo); u.f1('uSHi', sHi);
+    const K = new Float32Array(25); for (const [dc, dr, w] of kernel.cells) K[(dr+2)*5+(dc+2)] = w;
+    u.f1v('uKernel', K);
+    const B = new Float32Array(9), S = new Float32Array(9);
+    if (!rangedMode) { birth.forEach(n => { if (n >= 0 && n <= 8) B[n] = 1; }); survive.forEach(n => { if (n >= 0 && n <= 8) S[n] = 1; }); }
+    u.f1v('uBirth', B); u.f1v('uSurvive', S);
+  },
+  setColorUniforms(u) { u.f3v('uPal', PALETTE); },
+});
 
 // ---- timing loop ------------------------------------------------------------
 let playing = false, acc = 0, last = performance.now(), gps = 10;
@@ -481,12 +597,14 @@ dom.addEventListener('pointerdown', e => {
   editPoke();
   paintVal = grid[idx(cell[0], cell[1])] ? 0 : penType;  // first cell decides draw vs erase
   grid[idx(cell[0], cell[1])] = paintVal;
+  GPU.markDirty();
   painting = true; paint(); updateStatus();
 });
 dom.addEventListener('pointermove', e => {
   if (!painting) return;
   const cell = cellAt(e); if (!cell) return;
   grid[idx(cell[0], cell[1])] = paintVal;
+  GPU.markDirty();
   paint(); updateStatus();
 });
 dom.addEventListener('pointerup', e => {
@@ -506,17 +624,22 @@ function rebuild(c, r) {
   tex.dispose();
   tex = new THREE.DataTexture(texData, COLS, ROWS, THREE.RGBAFormat);
   tex.magFilter = tex.minFilter = THREE.NearestFilter;
+  // Cap display-mesh segments: the texture already carries per-cell detail, so we
+  // don't need a vertex per cell once grids get large (keeps the geometry cheap).
+  const segC = Math.min(COLS, 512), segR = Math.min(ROWS, 512);
   torus.geometry.dispose();
-  torus.geometry = new THREE.TorusGeometry(3, 1.3, ROWS, COLS);
+  torus.geometry = new THREE.TorusGeometry(3, 1.3, segR, segC);
   torus.material.map = tex; torus.material.needsUpdate = true;
   plane.geometry.dispose();
   plane.geometry = new THREE.PlaneGeometry(8, 8 * ROWS / COLS);
   plane.material.map = tex; plane.material.needsUpdate = true;
+  GPU.resize(); updateDisplayMap();   // rebuild GPU textures + colour target at the new size
   freshStart();
 }
 $('apply').onclick = () => {
-  const c = Math.max(20, Math.min(300, +$('cols').value | 0));
-  const r = Math.max(20, Math.min(300, +$('rows').value | 0));
+  const cap = GPU.available ? 2048 : 300;
+  const c = Math.max(20, Math.min(cap, +$('cols').value | 0));
+  const r = Math.max(20, Math.min(cap, +$('rows').value | 0));
   $('cols').value = c; $('rows').value = r;
   rebuild(c, r);
   randomize();                                       // give the new grid something to show
@@ -559,6 +682,7 @@ function setSpecies(n) {
   // fold orphans back into range; alternating classes + even NTYPES means the
   // modulo preserves each cell's clan (everything -> Amber when NTYPES = 1)
   for (let i = 0; i < grid.length; i++) if (grid[i] > NTYPES) grid[i] = (grid[i] - 1) % NTYPES + 1;
+  GPU.markDirty();
   buildTypeButtons();
   editPoke(); paint(); updateStatus();
 }
@@ -649,7 +773,55 @@ function selfTest() {
 }
 
 // ---- boot -------------------------------------------------------------------
+// Verify the GPU step against computeNext(): fully deterministic here, so exact
+// equality on configs exercising multi-type cooperation, ties, the weighted kernel,
+// and the Klein seam.
+function gpuSelfTest() {
+  if (!GPU.available) return;
+  const save = { g: grid, b: birth, s: survive, cw: Cwrap, rw: Rwrap, n: NTYPES,
+                 k: kernel, rm: rangedMode, gen: generation, en: GPU.enabled };
+  const compare = label => {
+    const ref = computeNext();
+    GPU.enabled = true; GPU.markDirty(); GPU.step(); GPU.syncToCPU();
+    let bad = 0;
+    for (let i = 0; i < grid.length; i++) if (grid[i] !== ref[i]) bad++;
+    console.assert(bad === 0, `GPU step: ${label} matches computeNext (mismatches=${bad})`);
+    return bad;
+  };
+  let total = 0;
+  // 4 types, Moore B3/S23, Klein seam: cooperation + rivalry + a tied majority
+  birth = new Set([3]); survive = new Set([2, 3]); kernel = KERNELS.moore; rangedMode = false;
+  [Cwrap, Rwrap] = TOPOS.klein; NTYPES = 4; generation = 0;
+  grid = new Uint8Array(COLS * ROWS);
+  grid[idx(10,10)] = grid[idx(12,10)] = 1; grid[idx(11,12)] = 3;     // cooperation birth
+  grid[idx(20,10)] = grid[idx(20,11)] = 1; grid[idx(22,11)] = grid[idx(22,12)] = 3; grid[idx(20,12)] = 2; // tie
+  grid[idx(0,5)] = grid[idx(1,5)] = grid[idx(0,6)] = 2;              // block on the flip seam
+  grid[idx(30,20)] = grid[idx(30,21)] = grid[idx(30,22)] = 4;        // cool blinker
+  total += compare('4-type Moore/Klein');
+  // weighted kernel, ranged rule, 2 types
+  kernel = KERNELS.w5x5; rangedMode = true; bLo = 6; bHi = 14; sLo = 4; sHi = 8;
+  [Cwrap, Rwrap] = TOPOS.torus; NTYPES = 2;
+  grid = new Uint8Array(COLS * ROWS);
+  for (let i = 0; i < grid.length; i++) { const h = (i * 2654435761) >>> 0; grid[i] = (h % 100) < 30 ? 1 + (h & 1) : 0; }
+  total += compare('weighted ranged 2-type');
+  if (total === 0) console.log('GPU torus step verified against CPU reference.');
+  grid = save.g; birth = save.b; survive = save.s; Cwrap = save.cw; Rwrap = save.rw;
+  NTYPES = save.n; kernel = save.k; rangedMode = save.rm; generation = save.gen;
+  GPU.enabled = save.en; GPU.markDirty();
+}
+
+$('gpu').disabled = !GPU.available;
+$('gpu').checked = GPU.enabled = GPU.available;   // default to GPU when supported
+$('gpu').onchange = e => {
+  GPU.enabled = e.target.checked;   // grid is CPU-fresh every gen here; no sync needed
+  GPU.markDirty();
+  updateDisplayMap(); paint();
+};
+if (GPU.available) { $('cols').max = $('rows').max = 2048; $('sizeLbl').textContent = 'Grid size (cols × rows, 20–2048 · GPU)'; }
+
 selfTest();
+gpuSelfTest();
+updateDisplayMap();
 parseRule('B3/S23');
 buildTypeButtons();
 randomize();
