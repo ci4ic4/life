@@ -68,7 +68,14 @@
   <input type="range" id="meb" min="1" max="15" value="10">
   <label>Breed spill μ (<span id="muv">0.50</span>)</label>
   <input type="range" id="mmu" min="0" max="100" value="50">
-  <button id="seedMart" style="margin-top:6px; width:100%">Seed a marten population</button>
+  <button id="seedMart" style="margin-top:6px; width:100%">Reintroduce martens</button>
+
+  <div class="grp">Evasion — the keystone</div>
+  <label>Red evades hunt (<span id="erv">0.70</span>)</label>
+  <input type="range" id="er" min="0" max="100" value="70">
+  <label>Grey evades hunt (<span id="egv">0.05</span>)</label>
+  <input type="range" id="eg" min="0" max="100" value="5">
+  <button id="symEvade" style="margin-top:6px; width:100%">Make evasion symmetric</button>
 
   <label>Tool (click/drag on the surface)</label>
   <div class="row">
@@ -131,13 +138,28 @@
   <h3>The pine marten</h3>
   <p>A conserved predator (brown, drawn dim when hungry and bright when
   fed). Each tick it loses <b>δ</b> energy to metabolism and gains <b>g</b>
-  by eating one adjacent prey — currently red and grey are equally easy
-  prey (evasion is 0 for both, a later slice). Energy caps at
-  <b>E_cap</b>; a marten with energy ≤0 starves and dies. A well-fed marten
-  (energy ≥ <b>E_breed</b>) can spill a new marten into an empty neighbour
-  cell at rate <b>μ</b>, paying a breeding cost. Use <b>Seed a marten
-  population</b> to drop a sparse scatter onto the current grid, or pick
-  Marten in <b>Pen species</b> to place them by hand.</p>
+  by eating one adjacent prey. Energy caps at <b>E_cap</b> (15); a marten
+  with energy ≤0 starves and dies. A well-fed marten (energy ≥
+  <b>E_breed</b>) can spill a new marten into an empty neighbour cell at
+  rate <b>μ</b>, paying a breeding cost. Use <b>Reintroduce martens</b> to
+  drop a sparse scatter onto the current grid, or pick Marten in <b>Pen
+  species</b> to place them by hand.</p>
+
+  <h3>Evasion — why any of this works</h3>
+  <p>Reds co-evolved with the marten and evade it; greys are North American,
+  ground-naive, and mostly do not. That single asymmetry is the whole
+  mechanism. Let the greys take over, then hit <b>Reintroduce martens</b>:
+  greys crash, reds recover.</p>
+  <p>The control case is one click. <b>Make evasion symmetric</b> sets red's
+  evasion equal to grey's — same predator, same predation pressure, only the
+  asymmetry removed. The reds die anyway. A predator that eats both species
+  does not save the native one; it just harvests both. Predation alone is not
+  the cause — the asymmetry is.</p>
+  <p>Watch the marten line too. Nothing couples it to the greys explicitly,
+  but because hunting an evading red usually wastes the turn, martens can only
+  live off greys — so their numbers track grey numbers, greys rebound as
+  martens fade, and the pair settles into a cycle. That is emergent, not
+  coded.</p>
 
   <h3>Controls</h3>
   <ul>
@@ -168,7 +190,7 @@ let grid = new Uint8Array(COLS * ROWS);          // 0 empty, 1 red, 2 grey, 3 ma
 let energy = new Float32Array(COLS * ROWS);
 let params = { betaRed: 0.10, betaGrey: 0.14, sigma: 0.92,
                delta: 1.0, g: 3.0, eBreed: 10, e0: 5, breedCost: 5, eCap: 15, mu: 0.5,
-               evadeRed: 0, evadeGrey: 0, gen: 0 };
+               evadeRed: 0.70, evadeGrey: 0.05, gen: 0 };
 let Cwrap = 'straight', Rwrap = 'straight';
 const TOPOS = { torus:['straight','straight'], klein:['flip','straight'],
                 mobius:['flip','none'], cylinder:['straight','none'] };
@@ -409,6 +431,14 @@ $('mg').oninput  = e => { params.g     = +e.target.value/10;  $('gv').textConten
 $('md').oninput  = e => { params.delta = +e.target.value/10;  $('dv').textContent  = params.delta.toFixed(1); };
 $('meb').oninput = e => { params.eBreed = +e.target.value|0;  $('ebv').textContent = params.eBreed; };
 $('mmu').oninput = e => { params.mu    = +e.target.value/100; $('muv').textContent = params.mu.toFixed(2); };
+$('er').oninput  = e => { params.evadeRed  = +e.target.value/100; $('erv').textContent = params.evadeRed.toFixed(2); };
+$('eg').oninput  = e => { params.evadeGrey = +e.target.value/100; $('egv').textContent = params.evadeGrey.toFixed(2); };
+// The control case in one click: same predator, same pressure, asymmetry removed.
+$('symEvade').onclick = () => {
+  params.evadeRed = params.evadeGrey;
+  $('er').value = Math.round(params.evadeRed * 100);
+  $('erv').textContent = params.evadeRed.toFixed(2);
+};
 $('topo').onchange = e => { [Cwrap, Rwrap] = TOPOS[e.target.value]; };
 $('speed').oninput = e => { gps = +e.target.value; $('spd').textContent = gps; };
 $('dens').oninput  = e => $('densv').textContent = (+e.target.value/100).toFixed(2);

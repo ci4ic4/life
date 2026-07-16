@@ -68,8 +68,10 @@
       for (const [dc, dr] of MOORE) {
         const i = resolveCell(c + dc, r + dr, COLS, ROWS, Cwrap, Rwrap);
         if (i === null || !isPrey(grid[i])) continue;
-        const p = prio(m, i);
-        if (best < 0 || p > bestP) { best = i; bestP = p; }
+        // NB: prio() takes (marten, prey) here and in phase 2a. Both directions must
+        // pass the same ordered pair or the two phases disagree on the winner.
+        const pr = prio(m, i);
+        if (best < 0 || pr > bestP) { best = i; bestP = pr; }
       }
       claim[m] = best;
     }

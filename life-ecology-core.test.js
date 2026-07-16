@@ -111,6 +111,11 @@ test('conservation: prey eaten equals martens that fed, no double meals', () => 
   let fed = 0;
   for (let i = 0; i < N; i++) if (before[i]===STATES.MARTEN && out.energy[i] > energy[i] - PRED.delta + 1e-9) fed++;
   assert.strictEqual(preyGone, fed, `prey removed (${preyGone}) must equal martens fed (${fed})`);
+  // Counting fed martens can't see a double meal (one meal -> 7, two -> 10; both "fed").
+  // Summing the energy does: eBreed/eCap are 100 here so no clamp or breedCost perturbs it.
+  let gained = 0;
+  for (let i = 0; i < N; i++) if (before[i]===STATES.MARTEN) gained += out.energy[i] - (energy[i] - PRED.delta);
+  assert.strictEqual(gained, preyGone * PRED.g, `energy gained (${gained}) must be exactly ${PRED.g} per prey eaten (${preyGone})`);
 });
 
 test('missed hunt: two martens, one prey -> prey removed once, one fed one starves', () => {
@@ -174,4 +179,99 @@ test('FEASIBILITY: predator and prey persist and oscillate on a torus', () => {
   assert.ok(mean > 0, `martens must persist (mean ${mean.toFixed(1)})`);
   assert.ok(mean < N * 0.9, `martens must not fill the grid (mean ${mean.toFixed(1)} of ${N})`);
   assert.ok(sd > 1, `population should oscillate, not flatline (stdDev ${sd.toFixed(2)})`);
+});
+
+// --- slice 3: asymmetric evasion (the cascade) -----------------------------
+
+test('evade: a prey that evades is not eaten and its hunter goes hungry', () => {
+  const COLS = 5, ROWS = 5, N = COLS * ROWS;
+  const at = (c, r) => r * COLS + c;
+  // one marten, one prey, no competition: the evade roll is the only thing in play.
+  const build = () => {
+    const grid = new Uint8Array(N), energy = new Float32Array(N);
+    grid[at(2,2)] = STATES.MARTEN; energy[at(2,2)] = 5;
+    grid[at(2,3)] = STATES.RED;
+    return { grid, energy };
+  };
+  // evadeRed=1 -> always escapes. rng()=0.5 < 1, so the roll fires.
+  let b = build();
+  let out = stepEcology(b.grid, b.energy, COLS, ROWS, 'straight', 'straight',
+                        { ...PRED, evadeRed: 1, evadeGrey: 0 }, () => 0.5);
+  assert.strictEqual(out.grid[at(2,3)], STATES.RED, 'evading prey survives');
+  assert.strictEqual(out.energy[at(2,2)], 5 - PRED.delta, 'hunter gained nothing and still paid delta');
+
+  // evadeRed=0 -> same setup, prey is eaten. Confirms the difference is the evade roll.
+  b = build();
+  out = stepEcology(b.grid, b.energy, COLS, ROWS, 'straight', 'straight',
+                    { ...PRED, evadeRed: 0, evadeGrey: 0 }, () => 0.5);
+  assert.strictEqual(out.grid[at(2,3)], STATES.EMPTY, 'non-evading prey is eaten');
+  assert.strictEqual(out.energy[at(2,2)], 5 - PRED.delta + PRED.g, 'hunter fed');
+});
+
+test('evade is per-species: the same rule eats the naive grey but not the evading red', () => {
+  const COLS = 5, ROWS = 5, N = COLS * ROWS;
+  const at = (c, r) => r * COLS + c;
+  const grid = new Uint8Array(N), energy = new Float32Array(N);
+  grid[at(1,1)] = STATES.MARTEN; energy[at(1,1)] = 5;
+  grid[at(1,2)] = STATES.RED;                  // evades
+  grid[at(3,3)] = STATES.MARTEN; energy[at(3,3)] = 5;
+  grid[at(3,4)] = STATES.GREY;                 // naive
+  const out = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight',
+                          { ...PRED, evadeRed: 1, evadeGrey: 0 }, () => 0.5);
+  assert.strictEqual(out.grid[at(1,2)], STATES.RED, 'red evades');
+  assert.strictEqual(out.grid[at(3,4)], STATES.EMPTY, 'grey does not');
+});
+
+// The payoff assertion. Reds are near-extinct under grey invasion; martens arrive.
+// Asymmetric evasion must reverse it; symmetric evasion -- same predator, same
+// pressure, only the asymmetry removed -- must NOT. That is the ecological claim.
+function cascadeTrial({ evadeRed, evadeGrey }) {
+  const COLS = 60, ROWS = 30, N = COLS * ROWS;
+  const INTRO = 300, END = 800;
+  const params = { betaRed: 0.10, betaGrey: 0.14, sigma: 0.92, delta: 1.0, g: 3.0,
+                   eBreed: 10, e0: 5, breedCost: 5, eCap: 15, mu: 0.5,
+                   evadeRed, evadeGrey, gen: 0 };
+  const rng = mulberry32(12345), seed = mulberry32(999);
+  let grid = new Uint8Array(N), energy = new Float32Array(N);
+  for (let i = 0; i < N; i++) {              // identical starting field for both arms
+    const r = seed();
+    if (r < 0.30) grid[i] = STATES.RED; else if (r < 0.60) grid[i] = STATES.GREY;
+  }
+  const tally = g => {
+    let red = 0, grey = 0;
+    for (const v of g) { if (v === STATES.RED) red++; else if (v === STATES.GREY) grey++; }
+    return { red, grey };
+  };
+  let atIntro = null;
+  for (let gen = 0; gen < END; gen++) {
+    if (gen === INTRO) {
+      atIntro = tally(grid);
+      for (let i = 0; i < N; i++) if (grid[i] !== STATES.MARTEN && rng() < 0.02) { grid[i] = STATES.MARTEN; energy[i] = 8; }
+    }
+    params.gen = gen;
+    ({ grid, energy } = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight', params, rng));
+  }
+  return { atIntro, final: tally(grid) };
+}
+
+test('CASCADE: asymmetric evasion lets martens reverse the grey invasion', () => {
+  const { atIntro, final } = cascadeTrial({ evadeRed: 0.70, evadeGrey: 0.05 });
+  assert.ok(atIntro.red < atIntro.grey * 0.1,
+    `setup: reds must be near-extinct when martens arrive (red ${atIntro.red}, grey ${atIntro.grey})`);
+  assert.ok(final.red > atIntro.red * 5,
+    `reds must recover strongly (${atIntro.red} -> ${final.red})`);
+  assert.ok(final.grey < atIntro.grey * 0.5,
+    `greys must be knocked back (${atIntro.grey} -> ${final.grey})`);
+  assert.ok(final.red > final.grey,
+    `reds must end up dominant (red ${final.red} vs grey ${final.grey})`);
+});
+
+test('CASCADE control: symmetric evasion does NOT save the reds', () => {
+  const { atIntro, final } = cascadeTrial({ evadeRed: 0.05, evadeGrey: 0.05 });
+  assert.ok(final.grey < atIntro.grey * 0.9,
+    `the predator still suppresses greys (${atIntro.grey} -> ${final.grey})`);
+  assert.ok(final.red <= atIntro.red,
+    `but reds must NOT recover without the asymmetry (${atIntro.red} -> ${final.red})`);
+  assert.ok(final.red < final.grey,
+    `reds must not become dominant (red ${final.red} vs grey ${final.grey})`);
 });
