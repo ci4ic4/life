@@ -45,20 +45,33 @@
     return n;
   }
 
+  function countInfectedNeighbours(grid, infected, c, r, COLS, ROWS, Cwrap, Rwrap) {
+    let n = 0;
+    for (const [dc, dr] of MOORE) {
+      const i = resolveCell(c + dc, r + dr, COLS, ROWS, Cwrap, Rwrap);
+      // Both species transmit. Greys are the reservoir that keeps it alive, but reds
+      // do pass it to each other during an outbreak — they just die too fast to
+      // sustain it on their own.
+      if (i !== null && infected[i] && (grid[i] === STATES.RED || grid[i] === STATES.GREY)) n++;
+    }
+    return n;
+  }
+
   // One generation. Prey grow by contact process; the marten is a conserved
   // predator with an energy counter. Two phases with an intent buffer (claim[]):
   // (1) each marten claims its highest-priority prey neighbour; (2) each prey is
   // eaten by the highest-priority marten that claimed it (unless it evades), so
   // one prey dies at most once and one marten eats at most once. Missed hunts
   // (lost the arbitration, or prey evaded) feed nobody.
-  function stepEcology(grid, energy, COLS, ROWS, Cwrap, Rwrap, params, rng) {
+  function stepEcology(grid, energy, infected, COLS, ROWS, Cwrap, Rwrap, params, rng) {
     const N = COLS * ROWS;
     const { betaRed, betaGrey, sigma,
             delta = 1, g = 3, eBreed = 10, e0 = 5, breedCost = 5, eCap = 15, mu = 0.5,
             evadeRed = 0, evadeGrey = 0, forage = 0, mate = false, mortality = 0,
-            gen = 0 } = params;
+            poxBeta = 0, poxLethal = 0, gen = 0 } = params;
     const { EMPTY, RED, GREY, MARTEN } = STATES;
     const nextGrid = new Uint8Array(N), nextEnergy = new Float32Array(N);
+    const nextInfected = new Uint8Array(N);
     const isPrey = v => v === RED || v === GREY;
 
     // deterministic arbitration priority for the ordered pair (marten, prey, gen)
@@ -141,7 +154,22 @@
         continue;
       }
       if (isPrey(v)) {
-        nextGrid[here] = eaten[here] ? EMPTY : (rng() < sigma ? v : EMPTY);
+        // Same short-circuit as before: an eaten prey never rolls for survival, so
+        // the rng stream is untouched when pox is off.
+        if (!(!eaten[here] && rng() < sigma)) { nextGrid[here] = EMPTY; continue; }
+        nextGrid[here] = v;
+        if (poxBeta > 0) {
+          // Squirrelpox. Greys are an asymptomatic reservoir: they carry it for life
+          // and pay nothing. Reds are killed by it. That asymmetry runs opposite to
+          // the evasion asymmetry, which is the whole point of the mechanic.
+          let inf = infected[here];
+          if (!inf) {
+            const nInf = countInfectedNeighbours(grid, infected, c, r, COLS, ROWS, Cwrap, Rwrap);
+            if (nInf && rng() < 1 - Math.pow(1 - poxBeta, nInf)) inf = 1;
+          }
+          if (inf && v === RED && rng() < poxLethal) { nextGrid[here] = EMPTY; continue; }
+          nextInfected[here] = inf;
+        }
         continue;
       }
       // EMPTY: contact-process prey colonisation vs marten breeding spill, one roll.
@@ -165,7 +193,10 @@
       else if (roll < pRed + pGrey + pMart) { nextGrid[here] = MARTEN; nextEnergy[here] = e0; }
       else nextGrid[here] = EMPTY;
     }
-    return { grid: nextGrid, energy: nextEnergy };
+    // Newborn prey are never born infected: nextInfected starts zeroed and only
+    // surviving carriers write to it. No vertical transmission — a grey born beside
+    // infected greys simply catches it next tick.
+    return { grid: nextGrid, energy: nextEnergy, infected: nextInfected };
   }
 
   return { STATES, resolveCell, stepEcology, hasEmptyNeighbour };

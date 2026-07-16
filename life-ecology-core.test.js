@@ -22,7 +22,7 @@ test('empty cell with k red neighbours colonises red at prob 1-(1-beta)^k', () =
     const grid = new Uint8Array(COLS * ROWS);
     grid[resolveCell(0, 1, COLS, ROWS, 'none', 'none')] = STATES.RED; // left of centre
     grid[resolveCell(2, 1, COLS, ROWS, 'none', 'none')] = STATES.RED; // right of centre
-    const next = stepEcology(grid, new Float32Array(grid.length), COLS, ROWS, 'none', 'none', params, mulberry32(t + 1)).grid;
+    const next = stepEcology(grid, new Float32Array(grid.length), new Uint8Array(grid.length), COLS, ROWS, 'none', 'none', params, mulberry32(t + 1)).grid;
     if (next[resolveCell(1, 1, COLS, ROWS, 'none', 'none')] === STATES.RED) reds++;
   }
   assert.ok(Math.abs(reds / trials - expected) < 0.02, `red rate ${reds/trials} vs ${expected}`);
@@ -36,7 +36,7 @@ test('grey out-colonises red when betaGrey > betaRed (symmetric neighbours)', ()
     const grid = new Uint8Array(COLS * ROWS);
     grid[resolveCell(0, 1, COLS, ROWS, 'none', 'none')] = STATES.RED;
     grid[resolveCell(2, 1, COLS, ROWS, 'none', 'none')] = STATES.GREY;
-    const next = stepEcology(grid, new Float32Array(grid.length), COLS, ROWS, 'none', 'none', params, mulberry32(t + 1)).grid;
+    const next = stepEcology(grid, new Float32Array(grid.length), new Uint8Array(grid.length), COLS, ROWS, 'none', 'none', params, mulberry32(t + 1)).grid;
     const c = next[resolveCell(1, 1, COLS, ROWS, 'none', 'none')];
     if (c === STATES.RED) reds++; else if (c === STATES.GREY) greys++;
   }
@@ -50,7 +50,7 @@ test('prey dies at rate 1-sigma with no neighbours', () => {
   for (let t = 0; t < trials; t++) {
     const grid = new Uint8Array(COLS * ROWS);
     grid[resolveCell(1, 1, COLS, ROWS, 'none', 'none')] = STATES.RED;
-    const next = stepEcology(grid, new Float32Array(grid.length), COLS, ROWS, 'none', 'none', params, mulberry32(t + 1)).grid;
+    const next = stepEcology(grid, new Float32Array(grid.length), new Uint8Array(grid.length), COLS, ROWS, 'none', 'none', params, mulberry32(t + 1)).grid;
     if (next[resolveCell(1, 1, COLS, ROWS, 'none', 'none')] === STATES.RED) survived++;
   }
   assert.ok(Math.abs(survived / trials - 0.8) < 0.02, `survival ${survived/trials}`);
@@ -70,7 +70,7 @@ test('grey competitively excludes red on a torus over time', () => {
   const count = g => { let nr = 0, ng = 0; for (const v of g) { if (v === STATES.RED) nr++; else if (v === STATES.GREY) ng++; } return { nr, ng }; };
   const start = count(grid);
   let energy = new Float32Array(N);
-  for (let t = 0; t < 400; t++) { const out = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight', params, rng); grid = out.grid; energy = out.energy; }
+  for (let t = 0; t < 400; t++) { const out = stepEcology(grid, energy, new Uint8Array(COLS*ROWS), COLS, ROWS, 'straight', 'straight', params, rng); grid = out.grid; energy = out.energy; }
   const end = count(grid);
   // grey share rises, red share falls — competitive exclusion of the native
   const startGreyShare = start.ng / (start.nr + start.ng);
@@ -88,7 +88,7 @@ test('empty cell with zero prey neighbours stays empty', () => {
   const COLS = 3, ROWS = 3;
   const params = { betaRed: 0.5, betaGrey: 0.5, sigma: 1.0 };
   const grid = new Uint8Array(COLS * ROWS);
-  const next = stepEcology(grid, new Float32Array(grid.length), COLS, ROWS, 'none', 'none', params, mulberry32(1)).grid;
+  const next = stepEcology(grid, new Float32Array(grid.length), new Uint8Array(grid.length), COLS, ROWS, 'none', 'none', params, mulberry32(1)).grid;
   const centreIndex = resolveCell(1, 1, COLS, ROWS, 'none', 'none');
   assert.strictEqual(next[centreIndex], STATES.EMPTY);
 });
@@ -105,7 +105,7 @@ test('conservation: prey eaten equals martens that fed, no double meals', () => 
   put(2,2,STATES.MARTEN,5); put(4,2,STATES.MARTEN,5); put(3,2,STATES.RED);
   put(3,3,STATES.GREY); put(2,3,STATES.MARTEN,5); put(6,6,STATES.MARTEN,5); put(6,5,STATES.GREY);
   const before = grid.slice();
-  const out = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight', PRED, () => 0.5);
+  const out = stepEcology(grid, energy, new Uint8Array(COLS*ROWS), COLS, ROWS, 'straight', 'straight', PRED, () => 0.5);
   let preyGone = 0;
   for (let i = 0; i < N; i++) if ((before[i]===STATES.RED||before[i]===STATES.GREY) && out.grid[i]!==before[i]) preyGone++;
   let fed = 0;
@@ -124,7 +124,7 @@ test('missed hunt: two martens, one prey -> prey removed once, one fed one starv
   grid[2*COLS+1] = STATES.MARTEN; energy[2*COLS+1] = 5;
   grid[2*COLS+3] = STATES.MARTEN; energy[2*COLS+3] = 5;
   grid[2*COLS+2] = STATES.RED;   // the single shared prey, between them
-  const out = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight', PRED, () => 0.5);
+  const out = stepEcology(grid, energy, new Uint8Array(COLS*ROWS), COLS, ROWS, 'straight', 'straight', PRED, () => 0.5);
   assert.strictEqual(out.grid[2*COLS+2], STATES.EMPTY, 'prey eaten');
   const e1 = out.energy[2*COLS+1], e2 = out.energy[2*COLS+3];
   const gained = [e1, e2].filter(e => e > 5 - PRED.delta + 1e-9).length;
@@ -138,7 +138,7 @@ test('starvation: a marten with no prey dies after ceil(E/delta) ticks', () => {
   let grid = new Uint8Array(N), energy = new Float32Array(N);
   grid[2*COLS+2] = STATES.MARTEN; energy[2*COLS+2] = 3;   // 3 / delta(1) = 3 ticks
   for (let t = 0; t < 3; t++) {
-    const out = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight', PRED, () => 0.5);
+    const out = stepEcology(grid, energy, new Uint8Array(COLS*ROWS), COLS, ROWS, 'straight', 'straight', PRED, () => 0.5);
     grid = out.grid; energy = out.energy;
   }
   assert.strictEqual(grid[2*COLS+2], STATES.EMPTY, 'marten starved to death');
@@ -149,7 +149,7 @@ test('breeding: eligible marten beside empty spawns a marten and pays breedCost'
   const grid = new Uint8Array(N), energy = new Float32Array(N);
   grid[2*COLS+2] = STATES.MARTEN; energy[2*COLS+2] = 12;   // >= eBreed
   const P = { ...PRED, eBreed: 10, breedCost: 5, mu: 1, e0: 5 };  // mu=1 -> spill certain
-  const out = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight', P, () => 0.0);
+  const out = stepEcology(grid, energy, new Uint8Array(COLS*ROWS), COLS, ROWS, 'straight', 'straight', P, () => 0.0);
   let born = 0; for (let i = 0; i < N; i++) if (i !== 2*COLS+2 && out.grid[i] === STATES.MARTEN) born++;
   assert.ok(born >= 1, 'at least one offspring marten');
   // parent paid delta + breedCost: 12 - 1 - 5 = 6
@@ -169,7 +169,7 @@ test('FEASIBILITY: predator and prey persist and oscillate on a torus', () => {
   const mart = [];
   for (let t = 0; t < 400; t++) {
     params.gen = t;
-    const out = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight', params, rng);
+    const out = stepEcology(grid, energy, new Uint8Array(COLS*ROWS), COLS, ROWS, 'straight', 'straight', params, rng);
     grid = out.grid; energy = out.energy;
     if (t >= 200) mart.push(martOf(grid));   // sample the settled second half
   }
@@ -195,14 +195,14 @@ test('evade: a prey that evades is not eaten and its hunter goes hungry', () => 
   };
   // evadeRed=1 -> always escapes. rng()=0.5 < 1, so the roll fires.
   let b = build();
-  let out = stepEcology(b.grid, b.energy, COLS, ROWS, 'straight', 'straight',
+  let out = stepEcology(b.grid, b.energy, new Uint8Array(COLS*ROWS), COLS, ROWS, 'straight', 'straight',
                         { ...PRED, evadeRed: 1, evadeGrey: 0 }, () => 0.5);
   assert.strictEqual(out.grid[at(2,3)], STATES.RED, 'evading prey survives');
   assert.strictEqual(out.energy[at(2,2)], 5 - PRED.delta, 'hunter gained nothing and still paid delta');
 
   // evadeRed=0 -> same setup, prey is eaten. Confirms the difference is the evade roll.
   b = build();
-  out = stepEcology(b.grid, b.energy, COLS, ROWS, 'straight', 'straight',
+  out = stepEcology(b.grid, b.energy, new Uint8Array(COLS*ROWS), COLS, ROWS, 'straight', 'straight',
                     { ...PRED, evadeRed: 0, evadeGrey: 0 }, () => 0.5);
   assert.strictEqual(out.grid[at(2,3)], STATES.EMPTY, 'non-evading prey is eaten');
   assert.strictEqual(out.energy[at(2,2)], 5 - PRED.delta + PRED.g, 'hunter fed');
@@ -216,7 +216,7 @@ test('evade is per-species: the same rule eats the naive grey but not the evadin
   grid[at(1,2)] = STATES.RED;                  // evades
   grid[at(3,3)] = STATES.MARTEN; energy[at(3,3)] = 5;
   grid[at(3,4)] = STATES.GREY;                 // naive
-  const out = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight',
+  const out = stepEcology(grid, energy, new Uint8Array(COLS*ROWS), COLS, ROWS, 'straight', 'straight',
                           { ...PRED, evadeRed: 1, evadeGrey: 0 }, () => 0.5);
   assert.strictEqual(out.grid[at(1,2)], STATES.RED, 'red evades');
   assert.strictEqual(out.grid[at(3,4)], STATES.EMPTY, 'grey does not');
@@ -249,7 +249,7 @@ function cascadeTrial({ evadeRed, evadeGrey }) {
       for (let i = 0; i < N; i++) if (grid[i] !== STATES.MARTEN && rng() < 0.02) { grid[i] = STATES.MARTEN; energy[i] = 8; }
     }
     params.gen = gen;
-    ({ grid, energy } = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight', params, rng));
+    ({ grid, energy } = stepEcology(grid, energy, new Uint8Array(COLS*ROWS), COLS, ROWS, 'straight', 'straight', params, rng));
   }
   return { atIntro, final: tally(grid) };
 }
@@ -284,8 +284,8 @@ test('forage=0 changes nothing: the alternative-food term is off by default', ()
   const P = { betaRed: 0.1, betaGrey: 0.14, sigma: 0.92, delta: 1, g: 3, eBreed: 10, e0: 5,
              breedCost: 5, eCap: 15, mu: 0.5, evadeRed: 0.7, evadeGrey: 0.05, gen: 5 };
   const a = build(), b = build();
-  const outA = stepEcology(a.grid, a.energy, COLS, ROWS, 'straight', 'straight', { ...P }, mulberry32(9));
-  const outB = stepEcology(b.grid, b.energy, COLS, ROWS, 'straight', 'straight', { ...P, forage: 0 }, mulberry32(9));
+  const outA = stepEcology(a.grid, a.energy, new Uint8Array(COLS*ROWS), COLS, ROWS, 'straight', 'straight', { ...P }, mulberry32(9));
+  const outB = stepEcology(b.grid, b.energy, new Uint8Array(COLS*ROWS), COLS, ROWS, 'straight', 'straight', { ...P, forage: 0 }, mulberry32(9));
   assert.deepStrictEqual([...outB.grid], [...outA.grid], 'forage=0 must be identical to omitting forage');
   assert.deepStrictEqual([...outB.energy], [...outA.energy], 'energy must match too');
 });
@@ -302,7 +302,7 @@ test('forage is a SHARED resource: a crowded marten gains less than an isolated 
   grid[at(1,1)] = STATES.MARTEN; energy[at(1,1)] = 5;          // isolated: 0 marten neighbours
   grid[at(5,5)] = STATES.MARTEN; energy[at(5,5)] = 5;          // crowded: 1 marten neighbour
   grid[at(6,5)] = STATES.MARTEN; energy[at(6,5)] = 5;
-  const out = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight', P, () => 0.5);
+  const out = stepEcology(grid, energy, new Uint8Array(COLS*ROWS), COLS, ROWS, 'straight', 'straight', P, () => 0.5);
   const lone = out.energy[at(1,1)], crowded = out.energy[at(5,5)];
   assert.strictEqual(lone, 5 - 1 + 4 / 1, 'isolated marten gets the whole forage');
   assert.strictEqual(crowded, 5 - 1 + 4 / 2, 'a marten sharing with one neighbour gets half');
@@ -319,7 +319,7 @@ test('forage lets martens outlive their prey, and the density self-caps', () => 
     for (let i = 0; i < N; i++) if (rng() < 0.10) { grid[i] = STATES.MARTEN; energy[i] = 8; }
     for (let gen = 0; gen < 400; gen++) {
       params.gen = gen;
-      ({ grid, energy } = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight', params, rng));
+      ({ grid, energy } = stepEcology(grid, energy, new Uint8Array(COLS*ROWS), COLS, ROWS, 'straight', 'straight', params, rng));
     }
     let n = 0; for (const v of grid) if (v === STATES.MARTEN) n++;
     return n;
@@ -343,7 +343,7 @@ test('HYPERPREDATION: subsidised martens extirpate the greys instead of cycling 
     for (let gen = 0; gen < 1000; gen++) {
       if (gen === 300) for (let i = 0; i < N; i++) if (grid[i] !== STATES.MARTEN && rng() < 0.02) { grid[i] = STATES.MARTEN; energy[i] = 8; }
       params.gen = gen;
-      ({ grid, energy } = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight', params, rng));
+      ({ grid, energy } = stepEcology(grid, energy, new Uint8Array(COLS*ROWS), COLS, ROWS, 'straight', 'straight', params, rng));
     }
     let grey = 0; for (const v of grid) if (v === STATES.GREY) grey++;
     return grey;
@@ -372,8 +372,8 @@ test('mate=false / mortality=0 change nothing: slice 5 is off by default', () =>
   const P = { betaRed: 0.1, betaGrey: 0.14, sigma: 0.92, delta: 1, g: 3, eBreed: 10, e0: 5,
               breedCost: 5, eCap: 15, mu: 0.5, evadeRed: 0.9, evadeGrey: 0.05, forage: 1, gen: 5 };
   const a = build(), b = build();
-  const outA = stepEcology(a.grid, a.energy, COLS, ROWS, 'straight', 'straight', { ...P }, mulberry32(9));
-  const outB = stepEcology(b.grid, b.energy, COLS, ROWS, 'straight', 'straight',
+  const outA = stepEcology(a.grid, a.energy, new Uint8Array(COLS*ROWS), COLS, ROWS, 'straight', 'straight', { ...P }, mulberry32(9));
+  const outB = stepEcology(b.grid, b.energy, new Uint8Array(COLS*ROWS), COLS, ROWS, 'straight', 'straight',
                            { ...P, mate: false, mortality: 0 }, mulberry32(9));
   assert.deepStrictEqual([...outB.grid], [...outA.grid], 'defaults must be identical to omitting them');
   assert.deepStrictEqual([...outB.energy], [...outA.energy], 'energy must match too');
@@ -389,7 +389,7 @@ test('mate: a lone marten cannot breed however well fed; a paired one can', () =
     grid[at(4,4)] = STATES.MARTEN; energy[at(4,4)] = 50;      // far above eBreed
     if (paired) { grid[at(5,4)] = STATES.MARTEN; energy[at(5,4)] = 50; }
     // mu=1 -> any eligible neighbour breeds into an empty cell with certainty
-    const out = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight', { ...P, mate }, () => 0.5);
+    const out = stepEcology(grid, energy, new Uint8Array(COLS*ROWS), COLS, ROWS, 'straight', 'straight', { ...P, mate }, () => 0.5);
     let n = 0; for (const v of out.grid) if (v === STATES.MARTEN) n++;
     return n;
   };
@@ -408,7 +408,7 @@ test('mate: the parent is not charged breedCost when it has no mate to breed wit
   const P = { betaRed: 0, betaGrey: 0, sigma: 1, delta: 1, g: 3, eBreed: 10, e0: 5,
               breedCost: 5, eCap: 100, mu: 0.5, forage: 0, evadeRed: 0, evadeGrey: 0,
               mate: true, gen: 1 };
-  const out = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight', P, () => 0.9);
+  const out = stepEcology(grid, energy, new Uint8Array(COLS*ROWS), COLS, ROWS, 'straight', 'straight', P, () => 0.9);
   assert.strictEqual(out.energy[at(4,4)], 12 - 1, 'lone marten pays delta only, not breedCost');
 });
 
@@ -419,7 +419,7 @@ test('mortality: martens die at the background rate regardless of energy', () =>
               mortality: 0.10, gen: 1 };
   const grid = new Uint8Array(N), energy = new Float32Array(N);
   for (let i = 0; i < N; i++) { grid[i] = STATES.MARTEN; energy[i] = 99; }  // delta=0, eBreed high: only mortality acts
-  const out = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight', P, mulberry32(5));
+  const out = stepEcology(grid, energy, new Uint8Array(COLS*ROWS), COLS, ROWS, 'straight', 'straight', P, mulberry32(5));
   let alive = 0; for (const v of out.grid) if (v === STATES.MARTEN) alive++;
   const died = (N - alive) / N;
   assert.ok(Math.abs(died - 0.10) < 0.02, `~10% should die of background causes, got ${(died*100).toFixed(1)}%`);
@@ -437,12 +437,133 @@ test('mortality: without it a break-even marten is immortal, with it it is not',
     const rng = mulberry32(2), params = { ...P, mortality };
     for (let gen = 0; gen < 2000; gen++) {
       params.gen = gen;
-      ({ grid, energy } = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight', params, rng));
+      ({ grid, energy } = stepEcology(grid, energy, new Uint8Array(COLS*ROWS), COLS, ROWS, 'straight', 'straight', params, rng));
     }
     return grid[at(4,4)] === STATES.MARTEN;
   };
   assert.strictEqual(survive(0), true, 'break-even marten never dies without background mortality');
   assert.strictEqual(survive(0.005), false, 'with mortality it eventually does');
+});
+
+// --- slice 6: squirrelpox ---------------------------------------------------
+const POX = { betaRed: 0, betaGrey: 0, sigma: 1, delta: 1, g: 3, eBreed: 100, e0: 5,
+              breedCost: 5, eCap: 100, mu: 0, forage: 0, evadeRed: 0, evadeGrey: 0, gen: 1 };
+
+test('poxBeta=0 changes nothing: squirrelpox is off by default', () => {
+  const COLS = 20, ROWS = 20, N = COLS * ROWS;
+  const build = () => {
+    const rng = mulberry32(3);
+    const grid = new Uint8Array(N), energy = new Float32Array(N), inf = new Uint8Array(N);
+    for (let i = 0; i < N; i++) {
+      const r = rng();
+      if (r < 0.25) grid[i] = STATES.RED;
+      else if (r < 0.45) grid[i] = STATES.GREY;
+      else if (r < 0.55) { grid[i] = STATES.MARTEN; energy[i] = 6; }
+      if (grid[i] === STATES.GREY) inf[i] = 1;      // carriers present but pox disabled
+    }
+    return { grid, energy, inf };
+  };
+  const P = { betaRed: 0.1, betaGrey: 0.14, sigma: 0.92, delta: 1, g: 3, eBreed: 10, e0: 5,
+              breedCost: 5, eCap: 15, mu: 0.5, evadeRed: 0.9, evadeGrey: 0.05, forage: 2, gen: 5 };
+  const a = build(), b = build();
+  const outA = stepEcology(a.grid, a.energy, a.inf, COLS, ROWS, 'straight', 'straight', { ...P }, mulberry32(9));
+  const outB = stepEcology(b.grid, b.energy, b.inf, COLS, ROWS, 'straight', 'straight',
+                           { ...P, poxBeta: 0, poxLethal: 0.5 }, mulberry32(9));
+  assert.deepStrictEqual([...outB.grid], [...outA.grid], 'poxBeta=0 must be identical to omitting it');
+  assert.deepStrictEqual([...outB.energy], [...outA.energy], 'energy must match too');
+});
+
+test('pox: greys are an asymptomatic reservoir, reds are killed by it', () => {
+  const COLS = 5, ROWS = 5, N = COLS * ROWS;
+  const at = (c, r) => r * COLS + c;
+  const P = { ...POX, poxBeta: 0, poxLethal: 1 };   // no transmission; only the lethality acts
+  const grid = new Uint8Array(N), energy = new Float32Array(N), inf = new Uint8Array(N);
+  grid[at(1,1)] = STATES.GREY; inf[at(1,1)] = 1;
+  grid[at(3,3)] = STATES.RED;  inf[at(3,3)] = 1;
+  // poxBeta must be > 0 for the branch to run at all; use a tiny value with no
+  // infected neighbours in range so nothing new is infected.
+  const out = stepEcology(grid, energy, inf, COLS, ROWS, 'straight', 'straight',
+                          { ...P, poxBeta: 1e-9 }, () => 0.5);
+  assert.strictEqual(out.grid[at(1,1)], STATES.GREY, 'infected grey survives — it is the reservoir');
+  assert.strictEqual(out.infected[at(1,1)], 1, 'and stays a carrier for life');
+  assert.strictEqual(out.grid[at(3,3)], STATES.EMPTY, 'infected red is killed');
+});
+
+test('pox: an uninfected prey catches it at 1-(1-poxBeta)^k from k infected neighbours', () => {
+  const COLS = 3, ROWS = 3;
+  const k = 2, poxBeta = 0.3, expected = 1 - Math.pow(1 - poxBeta, k);
+  let caught = 0, trials = 20000;
+  for (let t = 0; t < trials; t++) {
+    const grid = new Uint8Array(COLS * ROWS), inf = new Uint8Array(COLS * ROWS);
+    const at = (c, r) => r * COLS + c;
+    grid[at(1,1)] = STATES.GREY;                       // grey so it cannot die of pox
+    grid[at(0,1)] = STATES.GREY; inf[at(0,1)] = 1;
+    grid[at(2,1)] = STATES.GREY; inf[at(2,1)] = 1;
+    const out = stepEcology(grid, new Float32Array(9), inf, COLS, ROWS, 'none', 'none',
+                            { ...POX, poxBeta, poxLethal: 0 }, mulberry32(t + 1));
+    if (out.infected[at(1,1)]) caught++;
+  }
+  assert.ok(Math.abs(caught / trials - expected) < 0.02, `infection rate ${caught/trials} vs ${expected}`);
+});
+
+test('pox: newborn prey are not born infected', () => {
+  const COLS = 3, ROWS = 3;
+  const at = (c, r) => r * COLS + c;
+  const grid = new Uint8Array(9), inf = new Uint8Array(9);
+  grid[at(0,1)] = STATES.GREY; inf[at(0,1)] = 1;      // infected parent beside an empty centre
+  grid[at(2,1)] = STATES.GREY; inf[at(2,1)] = 1;
+  const out = stepEcology(grid, new Float32Array(9), inf, COLS, ROWS, 'none', 'none',
+                          { ...POX, betaGrey: 1, poxBeta: 0.5, poxLethal: 0 }, () => 0.01);
+  assert.strictEqual(out.grid[at(1,1)], STATES.GREY, 'centre was colonised');
+  assert.strictEqual(out.infected[at(1,1)], 0, 'the newborn is clean — no vertical transmission');
+});
+
+test('pox: it cannot persist without the grey reservoir', () => {
+  // Reds die too fast to keep it alive on their own. Kill the greys and the
+  // epidemic burns out — which is why crashing the greys helps reds twice over.
+  const COLS = 30, ROWS = 30, N = COLS * ROWS;
+  const rng = mulberry32(4);
+  let grid = new Uint8Array(N), energy = new Float32Array(N), infected = new Uint8Array(N);
+  for (let i = 0; i < N; i++) if (rng() < 0.5) { grid[i] = STATES.RED; infected[i] = rng() < 0.3 ? 1 : 0; }
+  const params = { betaRed: 0.10, betaGrey: 0, sigma: 0.92, delta: 1, g: 3, eBreed: 10, e0: 5,
+                   breedCost: 5, eCap: 15, mu: 0.5, forage: 0, evadeRed: 0, evadeGrey: 0,
+                   poxBeta: 0.3, poxLethal: 0.5, gen: 0 };
+  for (let gen = 0; gen < 300; gen++) {
+    params.gen = gen;
+    ({ grid, energy, infected } = stepEcology(grid, energy, infected, COLS, ROWS, 'straight', 'straight', params, rng));
+  }
+  let stillInfected = 0, reds = 0;
+  for (let i = 0; i < N; i++) { if (infected[i]) stillInfected++; if (grid[i] === STATES.RED) reds++; }
+  assert.strictEqual(stillInfected, 0, `pox must burn out in a red-only population (got ${stillInfected})`);
+  assert.ok(reds > 0, 'and the surviving reds recover the ground');
+});
+
+test('POX ACCELERATION: the pathogen replaces reds far faster than competition alone', () => {
+  const COLS = 60, ROWS = 30, N = COLS * ROWS;
+  const redsLeft = poxBeta => {
+    const params = { betaRed: 0.10, betaGrey: 0.14, sigma: 0.92, delta: 1, g: 3, eBreed: 10,
+                     e0: 5, breedCost: 5, eCap: 15, mu: 0.5, forage: 0,
+                     evadeRed: 0.90, evadeGrey: 0.05, poxBeta, poxLethal: 0.5, gen: 0 };
+    const rng = mulberry32(12345), seed = mulberry32(999);
+    let grid = new Uint8Array(N), energy = new Float32Array(N), infected = new Uint8Array(N);
+    for (let i = 0; i < N; i++) { const r = seed(); if (r < 0.30) grid[i] = STATES.RED; else if (r < 0.60) grid[i] = STATES.GREY; }
+    // one infected grey: the index case
+    for (let i = 0; i < N; i++) if (grid[i] === STATES.GREY) { infected[i] = 1; break; }
+    const trace = [];
+    for (let gen = 0; gen < 200; gen++) {
+      params.gen = gen;
+      ({ grid, energy, infected } = stepEcology(grid, energy, infected, COLS, ROWS, 'straight', 'straight', params, rng));
+      let reds = 0; for (const v of grid) if (v === STATES.RED) reds++;
+      trace.push(reds);
+    }
+    return trace;
+  };
+  const clean = redsLeft(0), poxed = redsLeft(0.25);
+  assert.ok(poxed[199] < clean[199] * 0.5,
+    `pox must crush the reds far below competition alone (pox ${poxed[199]} vs clean ${clean[199]})`);
+  // and it must do so much sooner
+  const halfOf = t => { const start = t[0]; return t.findIndex(v => v < start * 0.5); };
+  assert.ok(halfOf(poxed) < halfOf(clean), `pox must halve the reds sooner (pox gen ${halfOf(poxed)} vs clean gen ${halfOf(clean)})`);
 });
 
 test('CASCADE control: symmetric evasion does NOT save the reds', () => {
