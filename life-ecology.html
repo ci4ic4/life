@@ -86,6 +86,19 @@
   </details>
   <button id="seedMart" style="margin-top:6px; width:100%">Reintroduce martens</button>
 
+  <details class="grp"><summary>Woodland</summary>
+    <label>Terrain strength (<span id="tev">0.90</span>) — 0 = uniform wood</label>
+    <input type="range" id="te" min="0" max="100" value="90">
+    <div class="row">
+      <button id="newTerr">New woods</button>
+      <button id="flatTerr">Uniform</button>
+    </div>
+    <div style="font-size:10px; color:#566; margin-top:4px">
+      <span style="color:#2e6b40">■</span> conifer — greys do badly, reds hold on &nbsp;
+      <span style="color:#8a6634">■</span> broadleaf — greys thrive
+    </div>
+  </details>
+
   <details class="grp"><summary>Squirrelpox</summary>
     <label>Transmission per infected neighbour (<span id="pbv">0.25</span>)</label>
     <input type="range" id="pb" min="0" max="60" value="25">
@@ -195,10 +208,33 @@
   <b>Lethal to reds</b> saves <i>more</i> reds. A pox that kills in two ticks
   has two ticks to spread; one that lets its host linger has twenty. The
   deadlier strain burns itself out.</p>
-  <p><b>Caveat.</b> This torus has nowhere to hide. Real reds survive in
-  refuges — islands, Scottish strongholds, conifer plantations greys do poorly
-  in — and that is what keeps them alive until help arrives. Terrain was left
-  out of this model, so it states the case more bleakly than the real one.</p>
+  <p>That bleak result assumes nowhere to hide. Turn the woodland on and it
+  changes completely — see below.</p>
+
+  <h3>The woodland, and the way out</h3>
+  <p>The greys' advantage is an <i>acorn-and-hazel</i> advantage. It belongs to
+  the broadleaf wood, not to the animal. So <b>Terrain strength</b> scales the
+  grey's β by the ground it stands on: in broadleaf (brown) it climbs, in
+  conifer (dark green) it collapses. <b>Red's β never changes.</b> Reds held the
+  whole country before the greys came — they are outcompeted in broadleaf, not
+  excluded from it. That matters enormously: it means ground the marten clears
+  is ground the reds can walk straight back into. The marten, being a generalist,
+  ignores terrain entirely.</p>
+  <p>So <b>β_grey &gt; β_red is not a fact about greys.</b> It is a fact about
+  broadleaf. Set the terrain to a conifer basin and the invasive advantage simply
+  evaporates.</p>
+  <p>Now the three-act story. <b>Pox, no refuge:</b> the reds die everywhere
+  (turn Terrain to 0 and watch). <b>Pox plus a conifer refuge:</b> the reds
+  survive — but only inside it, penned, while the greys hold everything else.
+  That is Britain today, and it is a stable stalemate: 1858 reds in the
+  stronghold, zero outside, for as long as you care to run it. <b>Pox, refuge,
+  and martens:</b> the greys collapse and the reds pour out — 3798 of them onto
+  ground they had not touched in centuries.</p>
+  <p>The refuge does not even need to be big. A stronghold covering <b>5%</b> of
+  the map is enough to reseed the entire landscape once the martens do their
+  work. It only has to <i>exist</i>. Protect the strongholds, restore the
+  predator, and the rest follows — which is, more or less, the actual
+  conservation strategy.</p>
 
   <h3>Founding a population</h3>
   <p>Martens breed only if another marten is adjacent (<b>Breeding needs a
@@ -287,13 +323,15 @@ let COLS = 80, ROWS = 40;
 let grid = new Uint8Array(COLS * ROWS);          // 0 empty, 1 red, 2 grey, 3 marten
 let energy = new Float32Array(COLS * ROWS);
 let infected = new Uint8Array(COLS * ROWS);      // squirrelpox carrier flag, parallel to grid
+let env = new Float32Array(COLS * ROWS);         // terrain: -1 conifer .. +1 broadleaf, static
 let params = { betaRed: 0.10, betaGrey: 0.14, sigma: 0.92,
                delta: 1.0, g: 3.0, eBreed: 10, e0: 5, breedCost: 5, eCap: 15, mu: 0.5,
                evadeRed: 0.90, evadeGrey: 0.05, forage: 2.0,
                mate: true, mortality: 0.005,
                // Pox is armed but dormant: nothing spreads until a carrier exists, so
                // the sim starts as Ireland and you choose to make it Britain.
-               poxBeta: 0.25, poxLethal: 0.50, gen: 0 };
+               poxBeta: 0.25, poxLethal: 0.50,
+               terrain: 0.9, env, gen: 0 };
 // forage 2.0 = 2*delta is deliberate: a marten PAIR (forage/(1+1)) exactly breaks
 // even, a trio starves. With `mate` on, the pair is the stable unit and anything
 // larger has to be paid for with squirrels.
@@ -321,6 +359,27 @@ function randomize() {
   freshStart();
 }
 function clearGrid() { grid.fill(0); energy = new Float32Array(COLS * ROWS); infected = new Uint8Array(COLS * ROWS); freshStart(); }
+function wrapDist2(c0, r0, c1, r1) {
+  let dc = Math.abs(c0 - c1); if (dc > COLS/2) dc = COLS - dc;
+  let dr = Math.abs(r0 - r1); if (dr > ROWS/2) dr = ROWS - dr;
+  return dc*dc + dr*dr;
+}
+// Woodland relief, borrowed from life-evolve: a handful of signed Gaussian bumps,
+// normalised to ~[-1,1]. Patches, not white noise -- refuges have to be contiguous
+// or they are not refuges. Negative = conifer (red holds on), positive = broadleaf.
+function generateTerrain() {
+  const bumps = 9, sigma = Math.min(COLS, ROWS) / 4, twoSig2 = 2 * sigma * sigma;
+  env.fill(0);
+  for (let b = 0; b < bumps; b++) {
+    const bc = Math.random()*COLS, br = Math.random()*ROWS, amp = (Math.random()*2 - 1);
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++)
+      env[r*COLS+c] += amp * Math.exp(-wrapDist2(c, r, bc, br) / twoSig2);
+  }
+  let max = 0; for (const v of env) { const a = Math.abs(v); if (a > max) max = a; }
+  if (max > 0) for (let i = 0; i < env.length; i++) env[i] /= max;
+}
+function flatTerrain() { env.fill(0); paint(); updateStatus(); }
+
 function seedPox() {
   // Index cases: a handful of infected greys. Greys are the reservoir, so seeding
   // them is what starts an outbreak — seeding reds alone would just burn out.
@@ -398,14 +457,22 @@ const MART_DIM = [60, 36, 16], MART_BRIGHT = [150, 96, 44];   // brown, dim (hun
 // infected reds are dying and get a heavy one.
 const POX_RGB = [190, 210, 70];
 const blend = (rgb, t) => [0,1,2].map(k => rgb[k] + (POX_RGB[k] - rgb[k]) * t);
-function cellRGB(v, e, inf) {
+// Empty ground shows the woodland underneath: conifer dark green, broadleaf a warm
+// brown. Only the empty cells are tinted, so the landscape reads as a backdrop and
+// never fights the squirrels for attention.
+const CONIFER = [22, 46, 30], BROADLEAF = [54, 40, 20];
+function groundRGB(t) {                 // t = env, -1 conifer .. +1 broadleaf
+  const a = Math.abs(t), tint = t < 0 ? CONIFER : BROADLEAF;
+  return [0,1,2].map(k => DEAD[k] + (tint[k] - DEAD[k]) * a);
+}
+function cellRGB(v, e, inf, t) {
   if (v === STATES.RED)  return inf ? blend(RED_RGB, 0.75) : RED_RGB;
   if (v === STATES.GREY) return inf ? blend(GREY_RGB, 0.45) : GREY_RGB;
   if (v === STATES.MARTEN) {
-    const t = Math.max(0, Math.min(1, e / params.eCap));
-    return [0,1,2].map(k => MART_DIM[k] + (MART_BRIGHT[k] - MART_DIM[k]) * t);
+    const t2 = Math.max(0, Math.min(1, e / params.eCap));
+    return [0,1,2].map(k => MART_DIM[k] + (MART_BRIGHT[k] - MART_DIM[k]) * t2);
   }
-  return DEAD;
+  return params.terrain > 0 ? groundRGB(t) : DEAD;
 }
 
 // ---- WebGL: paint grid into a texture, wrap it on a torus --------------------
@@ -432,7 +499,7 @@ tex.magFilter = tex.minFilter = THREE.NearestFilter;
 
 function paint() {
   for (let i = 0; i < grid.length; i++) {
-    const rgb = cellRGB(grid[i], energy[i], infected[i]);
+    const rgb = cellRGB(grid[i], energy[i], infected[i], env[i]);
     texData[i*4] = rgb[0]; texData[i*4+1] = rgb[1]; texData[i*4+2] = rgb[2]; texData[i*4+3] = 255;
   }
   tex.needsUpdate = true;
@@ -529,6 +596,10 @@ function rebuild(c, r) {
   grid = new Uint8Array(COLS * ROWS);
   energy = new Float32Array(COLS * ROWS);
   infected = new Uint8Array(COLS * ROWS);
+  // params.env holds a REFERENCE, so re-point it or the rule keeps reading the old
+  // array at the old size. (Same class of bug as the stale slider refs in life-stochastic.)
+  params.env = env = new Float32Array(COLS * ROWS);
+  generateTerrain();
   texData = new Uint8Array(COLS * ROWS * 4);
   tex.dispose();
   tex = new THREE.DataTexture(texData, COLS, ROWS, THREE.RGBAFormat);
@@ -575,6 +646,9 @@ $('fo').oninput  = e => { params.forage = +e.target.value/10; $('fov').textConte
 $('mate').onchange = e => { params.mate = e.target.checked; };
 $('mo').oninput  = e => { params.mortality = +e.target.value/1000; $('mov').textContent = params.mortality.toFixed(3); };
 $('rs').oninput  = e => { releaseSize = +e.target.value; $('rsv').textContent = releaseSize; };
+$('te').oninput  = e => { params.terrain   = +e.target.value/100; $('tev').textContent = params.terrain.toFixed(2); paint(); };
+$('newTerr').onclick  = () => { generateTerrain(); paint(); updateStatus(); };
+$('flatTerr').onclick = () => flatTerrain();
 $('pb').oninput  = e => { params.poxBeta   = +e.target.value/100; $('pbv').textContent = params.poxBeta.toFixed(2); };
 $('pl').oninput  = e => { params.poxLethal = +e.target.value/100; $('plv').textContent = params.poxLethal.toFixed(2); };
 $('seedPox').onclick = () => { seedPox(); };
@@ -618,6 +692,7 @@ function selfTest() {   // boot check: core reachable + grey out-breeds red
 }
 selfTest();
 setView(false);
+generateTerrain();
 randomize();
 requestAnimationFrame(animate);
 </script>

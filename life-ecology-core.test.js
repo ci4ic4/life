@@ -566,6 +566,177 @@ test('POX ACCELERATION: the pathogen replaces reds far faster than competition a
   assert.ok(halfOf(poxed) < halfOf(clean), `pox must halve the reds sooner (pox gen ${halfOf(poxed)} vs clean gen ${halfOf(clean)})`);
 });
 
+// --- slice 7: terrain refuges ----------------------------------------------
+
+test('terrain=0 changes nothing: the field is inert without an amplitude', () => {
+  const COLS = 20, ROWS = 20, N = COLS * ROWS;
+  const env = new Float32Array(N);
+  for (let i = 0; i < N; i++) env[i] = Math.sin(i) ;       // a real, non-flat field
+  const build = () => {
+    const rng = mulberry32(3);
+    const grid = new Uint8Array(N), energy = new Float32Array(N), inf = new Uint8Array(N);
+    for (let i = 0; i < N; i++) {
+      const r = rng();
+      if (r < 0.25) grid[i] = STATES.RED;
+      else if (r < 0.45) grid[i] = STATES.GREY;
+      else if (r < 0.55) { grid[i] = STATES.MARTEN; energy[i] = 6; }
+    }
+    return { grid, energy, inf };
+  };
+  const P = { betaRed: 0.1, betaGrey: 0.14, sigma: 0.92, delta: 1, g: 3, eBreed: 10, e0: 5,
+              breedCost: 5, eCap: 15, mu: 0.5, evadeRed: 0.9, evadeGrey: 0.05, forage: 2, gen: 5 };
+  const a = build(), b = build();
+  const outA = stepEcology(a.grid, a.energy, a.inf, COLS, ROWS, 'straight', 'straight', { ...P }, mulberry32(9));
+  const outB = stepEcology(b.grid, b.energy, b.inf, COLS, ROWS, 'straight', 'straight',
+                           { ...P, terrain: 0, env }, mulberry32(9));
+  assert.deepStrictEqual([...outB.grid], [...outA.grid], 'terrain=0 must be identical even with a field present');
+});
+
+test('terrain: conifer favours red, broadleaf favours grey', () => {
+  const COLS = 3, ROWS = 3, N = 9;
+  const at = (c, r) => r * COLS + c;
+  // one red and one grey flanking an empty centre: who takes it?
+  const contest = envValue => {
+    const env = new Float32Array(N).fill(envValue);
+    let reds = 0, greys = 0;
+    for (let t = 0; t < 20000; t++) {
+      const grid = new Uint8Array(N);
+      grid[at(0,1)] = STATES.RED;
+      grid[at(2,1)] = STATES.GREY;
+      const out = stepEcology(grid, new Float32Array(N), new Uint8Array(N), COLS, ROWS, 'none', 'none',
+        { betaRed: 0.10, betaGrey: 0.14, sigma: 1, terrain: 0.8, env }, mulberry32(t + 1));
+      const c = out.grid[at(1,1)];
+      if (c === STATES.RED) reds++; else if (c === STATES.GREY) greys++;
+    }
+    return { reds, greys };
+  };
+  const conifer = contest(-1), broadleaf = contest(+1);
+  assert.ok(conifer.reds > conifer.greys,
+    `conifer must favour red (red ${conifer.reds} vs grey ${conifer.greys})`);
+  assert.ok(broadleaf.greys > broadleaf.reds * 2,
+    `broadleaf must favour grey (grey ${broadleaf.greys} vs red ${broadleaf.reds})`);
+});
+
+test('terrain: red is never excluded from broadleaf, only outcompeted there', () => {
+  // Reds held the whole country before the greys arrived. If terrain scaled red down
+  // in broadleaf, reds could never retake ground the marten cleared — the refuge
+  // would become a prison. Red's beta must be terrain-independent.
+  const COLS = 3, ROWS = 3, N = 9;
+  const at = (c, r) => r * COLS + c;
+  const redAlone = envValue => {
+    const env = new Float32Array(N).fill(envValue);
+    let reds = 0, trials = 20000;
+    for (let t = 0; t < trials; t++) {
+      const grid = new Uint8Array(N);
+      grid[at(0,1)] = STATES.RED; grid[at(2,1)] = STATES.RED;   // no greys anywhere
+      const out = stepEcology(grid, new Float32Array(N), new Uint8Array(N), COLS, ROWS, 'none', 'none',
+        { betaRed: 0.30, betaGrey: 0.14, sigma: 1, terrain: 1.0, env }, mulberry32(t + 1));
+      if (out.grid[at(1,1)] === STATES.RED) reds++;
+    }
+    return reds / trials;
+  };
+  const inConifer = redAlone(-1), inBroadleaf = redAlone(+1);
+  const expected = 1 - Math.pow(1 - 0.30, 2);
+  assert.ok(Math.abs(inBroadleaf - expected) < 0.02,
+    `red must colonise broadleaf at its full rate (${inBroadleaf} vs ${expected})`);
+  assert.ok(Math.abs(inConifer - inBroadleaf) < 0.02,
+    `red must be terrain-blind (conifer ${inConifer} vs broadleaf ${inBroadleaf})`);
+});
+
+test('terrain: the marten is indifferent to it', () => {
+  // The predator works conifer and broadleaf equally well. Same seed, same rng,
+  // opposite terrain -> the marten's hunting and breeding must not budge.
+  const COLS = 12, ROWS = 12, N = COLS * ROWS;
+  const run = envValue => {
+    const env = new Float32Array(N).fill(envValue);
+    const rng = mulberry32(7);
+    const grid = new Uint8Array(N), energy = new Float32Array(N);
+    for (let i = 0; i < N; i++) if (i % 3 === 0) { grid[i] = STATES.MARTEN; energy[i] = 12; }
+    // no prey at all, so only marten behaviour can differ
+    const out = stepEcology(grid, energy, new Uint8Array(N), COLS, ROWS, 'straight', 'straight',
+      { betaRed: 0.1, betaGrey: 0.14, sigma: 0.92, delta: 1, g: 3, eBreed: 10, e0: 5, breedCost: 5,
+        eCap: 15, mu: 0.5, forage: 2, terrain: 1.0, env, gen: 3 }, rng);
+    let n = 0; for (const v of out.grid) if (v === STATES.MARTEN) n++;
+    return { n, energy: [...out.energy] };
+  };
+  const conifer = run(-1), broadleaf = run(+1);
+  assert.strictEqual(conifer.n, broadleaf.n, 'marten count must not depend on terrain');
+  assert.deepStrictEqual(conifer.energy, broadleaf.energy, 'marten energy must not depend on terrain');
+});
+
+test('REFUGE: a conifer patch keeps reds alive through a squirrelpox epidemic', () => {
+  // The point of the whole slice. Greys colonise the conifer poorly, so the
+  // reservoir never establishes there, and red-to-red transmission burns out.
+  const COLS = 80, ROWS = 40, N = COLS * ROWS;
+  const survivors = terrain => {
+    const env = new Float32Array(N);
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      // one conifer basin on the left third, broadleaf elsewhere
+      const inRefuge = c < COLS / 3;
+      env[r * COLS + c] = inRefuge ? -1 : +1;
+    }
+    const params = { betaRed: 0.10, betaGrey: 0.14, sigma: 0.92, delta: 1, g: 3, eBreed: 10,
+                     e0: 5, breedCost: 5, eCap: 15, mu: 0.5, forage: 2, evadeRed: 0.90,
+                     evadeGrey: 0.05, poxBeta: 0.25, poxLethal: 0.5, terrain, env, gen: 0 };
+    const rng = mulberry32(12345), seed = mulberry32(999);
+    let grid = new Uint8Array(N), energy = new Float32Array(N), infected = new Uint8Array(N);
+    for (let i = 0; i < N; i++) { const r = seed(); if (r < 0.30) grid[i] = STATES.RED; else if (r < 0.60) grid[i] = STATES.GREY; }
+    for (let gen = 0; gen < 600; gen++) {
+      if (gen === 200) {   // introduce the pox into the broadleaf greys
+        let n = 0;
+        for (let i = 0; i < N && n < 20; i++) if (grid[i] === STATES.GREY && rng() < 0.02) { infected[i] = 1; n++; }
+      }
+      params.gen = gen;
+      ({ grid, energy, infected } = stepEcology(grid, energy, infected, COLS, ROWS, 'straight', 'straight', params, rng));
+    }
+    let reds = 0; for (const v of grid) if (v === STATES.RED) reds++;
+    return reds;
+  };
+  assert.strictEqual(survivors(0), 0, 'with no terrain the pox takes every red (slice 6 result)');
+  assert.ok(survivors(0.9) > 0, 'a conifer refuge must leave reds alive');
+});
+
+test('BREAKOUT: reds are locked in the stronghold until the martens arrive', () => {
+  // The payoff of the whole model. Pox present, reds confined to a conifer refuge —
+  // Britain today. Release martens into the broadleaf and the reds should come out.
+  const COLS = 120, ROWS = 60, N = COLS * ROWS, FRAC = 1 / 3;
+  const env = new Float32Array(N);
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) env[r * COLS + c] = c < COLS * FRAC ? -1 : +1;
+  const outsideReds = martens => {
+    const params = { betaRed: 0.10, betaGrey: 0.14, sigma: 0.92, delta: 1, g: 3, eBreed: 10, e0: 5,
+                     breedCost: 5, eCap: 15, mu: 0.5, forage: 2, mate: true, mortality: 0.005,
+                     evadeRed: 0.90, evadeGrey: 0.05, poxBeta: 0.25, poxLethal: 0.5,
+                     terrain: 0.9, env, gen: 0 };
+    const rng = mulberry32(31), seed = mulberry32(901);
+    let grid = new Uint8Array(N), energy = new Float32Array(N), infected = new Uint8Array(N);
+    for (let i = 0; i < N; i++) { const r = seed(); if (r < 0.30) grid[i] = STATES.RED; else if (r < 0.60) grid[i] = STATES.GREY; }
+    for (let gen = 0; gen < 2200; gen++) {
+      if (gen === 200) { let n = 0; for (let i = 0; i < N && n < 20; i++) if (grid[i] === STATES.GREY && rng() < 0.02) { infected[i] = 1; n++; } }
+      if (gen === 800 && martens) {
+        let placed = 0; const c0 = (COLS * 0.75) | 0, r0 = ROWS >> 1;
+        for (let rad = 0; placed < 40 && rad < 40; rad++)
+          for (let dr = -rad; dr <= rad && placed < 40; dr++)
+            for (let dc = -rad; dc <= rad && placed < 40; dc++) {
+              if (Math.max(Math.abs(dr), Math.abs(dc)) !== rad) continue;
+              const i = ((r0 + dr + ROWS) % ROWS) * COLS + ((c0 + dc + COLS) % COLS);
+              if (grid[i] !== STATES.MARTEN) { grid[i] = STATES.MARTEN; energy[i] = 8; placed++; }
+            }
+      }
+      params.gen = gen;
+      ({ grid, energy, infected } = stepEcology(grid, energy, infected, COLS, ROWS, 'straight', 'straight', params, rng));
+    }
+    let inR = 0, outR = 0;
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++)
+      if (grid[r * COLS + c] === STATES.RED) (c < COLS * FRAC ? inR++ : outR++);
+    return { inR, outR };
+  };
+  const stuck = outsideReds(false);
+  assert.ok(stuck.inR > 500, `reds must survive in the refuge (got ${stuck.inR})`);
+  assert.ok(stuck.outR < stuck.inR * 0.05, `but stay locked inside it without martens (${stuck.outR} escaped)`);
+  const freed = outsideReds(true);
+  assert.ok(freed.outR > stuck.inR, `martens must let the reds break out (${freed.outR} outside vs ${stuck.inR} penned)`);
+});
+
 test('CASCADE control: symmetric evasion does NOT save the reds', () => {
   const { atIntro, final } = cascadeTrial({ evadeRed: 0.05, evadeGrey: 0.05 });
   assert.ok(final.grey < atIntro.grey * 0.9,

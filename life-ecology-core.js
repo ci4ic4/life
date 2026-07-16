@@ -45,6 +45,8 @@
     return n;
   }
 
+  const clamp01 = x => x < 0 ? 0 : x > 1 ? 1 : x;
+
   function countInfectedNeighbours(grid, infected, c, r, COLS, ROWS, Cwrap, Rwrap) {
     let n = 0;
     for (const [dc, dr] of MOORE) {
@@ -68,7 +70,7 @@
     const { betaRed, betaGrey, sigma,
             delta = 1, g = 3, eBreed = 10, e0 = 5, breedCost = 5, eCap = 15, mu = 0.5,
             evadeRed = 0, evadeGrey = 0, forage = 0, mate = false, mortality = 0,
-            poxBeta = 0, poxLethal = 0, gen = 0 } = params;
+            poxBeta = 0, poxLethal = 0, terrain = 0, env = null, gen = 0 } = params;
     const { EMPTY, RED, GREY, MARTEN } = STATES;
     const nextGrid = new Uint8Array(N), nextEnergy = new Float32Array(N);
     const nextInfected = new Uint8Array(N);
@@ -181,8 +183,23 @@
         else if (grid[i] === GREY) nGrey++;
         else if (grid[i] === MARTEN && canBreed[i]) nElig++;
       }
-      const pRed  = nRed  ? 1 - Math.pow(1 - betaRed,  nRed)  : 0;
-      const pGrey = nGrey ? 1 - Math.pow(1 - betaGrey, nGrey) : 0;
+      // Terrain modulates the GREY only. The grey's edge is an acorn-and-hazel edge:
+      // it is a property of broadleaf, not of the animal. env<0 is conifer, where that
+      // edge is worth nothing; env>0 is broadleaf, where it is worth a lot. So
+      // betaGrey > betaRed is not an intrinsic fact — the invasive advantage exists
+      // only in the habitat that grants it.
+      //
+      // Red stays flat on purpose. Reds held the whole country, broadleaf included,
+      // before the greys came: they are outcompeted there, not excluded. Scaling red
+      // down in broadleaf would brick the door behind them, and they could never
+      // recolonise ground the marten had cleared.
+      //
+      // The marten works both habitats equally well, so pMart below is untouched.
+      // terrain=0 (or no env) leaves beta exactly as given.
+      const e = (terrain > 0 && env) ? terrain * env[here] : 0;
+      const bGrey = e ? clamp01(betaGrey * (1 + e)) : betaGrey;
+      const pRed  = nRed  ? 1 - Math.pow(1 - betaRed, nRed)  : 0;
+      const pGrey = nGrey ? 1 - Math.pow(1 - bGrey,   nGrey) : 0;
       const pMart = nElig ? 1 - Math.pow(1 - mu,       nElig) : 0;
       // one draw partitions the empty cell: red slice first, then grey, then marten.
       // ponytail: red-first is a fixed convention; grey still wins via higher
