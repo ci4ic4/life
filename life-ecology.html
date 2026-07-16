@@ -68,11 +68,13 @@
   <input type="range" id="meb" min="1" max="15" value="10">
   <label>Breed spill μ (<span id="muv">0.50</span>)</label>
   <input type="range" id="mmu" min="0" max="100" value="50">
+  <label>Other food — voles, birds, berries (<span id="fov">1.0</span>)</label>
+  <input type="range" id="fo" min="0" max="30" value="10">
   <button id="seedMart" style="margin-top:6px; width:100%">Reintroduce martens</button>
 
   <div class="grp">Evasion — the keystone</div>
-  <label>Red evades hunt (<span id="erv">0.70</span>)</label>
-  <input type="range" id="er" min="0" max="100" value="70">
+  <label>Red evades hunt (<span id="erv">0.90</span>)</label>
+  <input type="range" id="er" min="0" max="100" value="90">
   <label>Grey evades hunt (<span id="egv">0.05</span>)</label>
   <input type="range" id="eg" min="0" max="100" value="5">
   <button id="symEvade" style="margin-top:6px; width:100%">Make evasion symmetric</button>
@@ -161,6 +163,29 @@
   martens fade, and the pair settles into a cycle. That is emergent, not
   coded.</p>
 
+  <h3>Other food — and why it changes everything</h3>
+  <p>Real martens are generalists: voles, birds, eggs, berries, carrion. Their
+  numbers do not depend on squirrels. <b>Other food</b> adds that. It has to be
+  a <i>shared</i> resource — a flat food bonus would just be a rename of a
+  lower <b>δ</b>, since <i>e−δ+food</i> is only <i>e−(δ−food)</i>. So each
+  marten's share is divided by how many martens crowd around it, which is what
+  gives martens a baseline density set by the countryside rather than by
+  squirrels. Set it to 0 to switch the subsidy off.</p>
+  <p>Turning it on stops the boom-bust cycle: a subsidised marten does not
+  starve when the greys thin out, so the greys never get their rebound and are
+  wiped out completely rather than cycling. That matches Ireland, where greys
+  vanished from marten country. But push <b>Other food</b> past ~2 and the
+  martens take the reds down too — a predator propped up by other food has no
+  reason to stop. Ecologists call this <b>hyperpredation</b>; it is how
+  cats fed by introduced rabbits have exterminated island birds.</p>
+  <p>Now the strange one. Set <b>Other food</b> to 0 and raise <b>Red evades</b>
+  to 0.95: the reds do <i>worse</i>, and the greys take over. With no other
+  food, the marten lives only on squirrels — so reds that evade too well starve
+  the very predator that is keeping the greys off them. Unsubsidised, the reds
+  have to feed their own bodyguard. Only with both the other food <i>and</i>
+  good evasion (the defaults) do you get the real outcome: greys gone, reds
+  abundant, martens steady.</p>
+
   <h3>Controls</h3>
   <ul>
     <li><b>β red / β grey / σ</b> — the ecology knobs; raise σ for
@@ -190,7 +215,7 @@ let grid = new Uint8Array(COLS * ROWS);          // 0 empty, 1 red, 2 grey, 3 ma
 let energy = new Float32Array(COLS * ROWS);
 let params = { betaRed: 0.10, betaGrey: 0.14, sigma: 0.92,
                delta: 1.0, g: 3.0, eBreed: 10, e0: 5, breedCost: 5, eCap: 15, mu: 0.5,
-               evadeRed: 0.70, evadeGrey: 0.05, gen: 0 };
+               evadeRed: 0.90, evadeGrey: 0.05, forage: 1.0, gen: 0 };
 let Cwrap = 'straight', Rwrap = 'straight';
 const TOPOS = { torus:['straight','straight'], klein:['flip','straight'],
                 mobius:['flip','none'], cylinder:['straight','none'] };
@@ -431,6 +456,7 @@ $('mg').oninput  = e => { params.g     = +e.target.value/10;  $('gv').textConten
 $('md').oninput  = e => { params.delta = +e.target.value/10;  $('dv').textContent  = params.delta.toFixed(1); };
 $('meb').oninput = e => { params.eBreed = +e.target.value|0;  $('ebv').textContent = params.eBreed; };
 $('mmu').oninput = e => { params.mu    = +e.target.value/100; $('muv').textContent = params.mu.toFixed(2); };
+$('fo').oninput  = e => { params.forage = +e.target.value/10; $('fov').textContent = params.forage.toFixed(1); };
 $('er').oninput  = e => { params.evadeRed  = +e.target.value/100; $('erv').textContent = params.evadeRed.toFixed(2); };
 $('eg').oninput  = e => { params.evadeGrey = +e.target.value/100; $('egv').textContent = params.evadeGrey.toFixed(2); };
 // The control case in one click: same predator, same pressure, asymmetry removed.

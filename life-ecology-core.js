@@ -36,6 +36,15 @@
     return false;
   }
 
+  function countMartenNeighbours(grid, c, r, COLS, ROWS, Cwrap, Rwrap) {
+    let n = 0;
+    for (const [dc, dr] of MOORE) {
+      const i = resolveCell(c + dc, r + dr, COLS, ROWS, Cwrap, Rwrap);
+      if (i !== null && grid[i] === STATES.MARTEN) n++;
+    }
+    return n;
+  }
+
   // One generation. Prey grow by contact process; the marten is a conserved
   // predator with an energy counter. Two phases with an intent buffer (claim[]):
   // (1) each marten claims its highest-priority prey neighbour; (2) each prey is
@@ -46,7 +55,7 @@
     const N = COLS * ROWS;
     const { betaRed, betaGrey, sigma,
             delta = 1, g = 3, eBreed = 10, e0 = 5, breedCost = 5, eCap = 15, mu = 0.5,
-            evadeRed = 0, evadeGrey = 0, gen = 0 } = params;
+            evadeRed = 0, evadeGrey = 0, forage = 0, gen = 0 } = params;
     const { EMPTY, RED, GREY, MARTEN } = STATES;
     const nextGrid = new Uint8Array(N), nextEnergy = new Float32Array(N);
     const isPrey = v => v === RED || v === GREY;
@@ -100,6 +109,12 @@
       const here = r * COLS + c, v = grid[here];
       if (v === MARTEN) {
         let e = energy[here] - delta + (ate[here] ? g : 0);
+        // Alternative prey (voles, birds, berries). It must be a SHARED resource:
+        // a flat term would be algebraically identical to lowering delta, so it
+        // would add no dynamics at all. Dividing by the local marten count makes it
+        // saturate with crowding, which is what gives martens a baseline density
+        // set by the background food rather than by squirrels. forage=0 disables.
+        if (forage > 0) e += forage / (1 + countMartenNeighbours(grid, c, r, COLS, ROWS, Cwrap, Rwrap));
         // ponytail: flat breed cost when eligible AND could seed an empty neighbour;
         // exact per-offspring charge needs radius-2, not worth it for the dynamics.
         if (energy[here] >= eBreed && hasEmptyNeighbour(grid, c, r, COLS, ROWS, Cwrap, Rwrap)) e -= breedCost;

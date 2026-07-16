@@ -266,6 +266,94 @@ test('CASCADE: asymmetric evasion lets martens reverse the grey invasion', () =>
     `reds must end up dominant (red ${final.red} vs grey ${final.grey})`);
 });
 
+// --- slice 4: alternative marten food (voles/birds/berries) ----------------
+
+test('forage=0 changes nothing: the alternative-food term is off by default', () => {
+  const COLS = 20, ROWS = 20, N = COLS * ROWS;
+  const build = () => {
+    const rng = mulberry32(3);
+    const grid = new Uint8Array(N), energy = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      const r = rng();
+      if (r < 0.25) grid[i] = STATES.RED;
+      else if (r < 0.45) grid[i] = STATES.GREY;
+      else if (r < 0.55) { grid[i] = STATES.MARTEN; energy[i] = 6; }
+    }
+    return { grid, energy };
+  };
+  const P = { betaRed: 0.1, betaGrey: 0.14, sigma: 0.92, delta: 1, g: 3, eBreed: 10, e0: 5,
+             breedCost: 5, eCap: 15, mu: 0.5, evadeRed: 0.7, evadeGrey: 0.05, gen: 5 };
+  const a = build(), b = build();
+  const outA = stepEcology(a.grid, a.energy, COLS, ROWS, 'straight', 'straight', { ...P }, mulberry32(9));
+  const outB = stepEcology(b.grid, b.energy, COLS, ROWS, 'straight', 'straight', { ...P, forage: 0 }, mulberry32(9));
+  assert.deepStrictEqual([...outB.grid], [...outA.grid], 'forage=0 must be identical to omitting forage');
+  assert.deepStrictEqual([...outB.energy], [...outA.energy], 'energy must match too');
+});
+
+test('forage is a SHARED resource: a crowded marten gains less than an isolated one', () => {
+  // The load-bearing property. A flat food term would be algebraically the same as
+  // lowering delta and would add no dynamics; only saturation with crowding gives
+  // martens a density cap. So the crowded marten MUST do worse.
+  const COLS = 9, ROWS = 9, N = COLS * ROWS;
+  const P = { betaRed: 0, betaGrey: 0, sigma: 1, delta: 1, g: 3, eBreed: 100, e0: 5,
+              breedCost: 5, eCap: 100, mu: 0, evadeRed: 0, evadeGrey: 0, forage: 4, gen: 1 };
+  const at = (c, r) => r * COLS + c;
+  const grid = new Uint8Array(N), energy = new Float32Array(N);
+  grid[at(1,1)] = STATES.MARTEN; energy[at(1,1)] = 5;          // isolated: 0 marten neighbours
+  grid[at(5,5)] = STATES.MARTEN; energy[at(5,5)] = 5;          // crowded: 1 marten neighbour
+  grid[at(6,5)] = STATES.MARTEN; energy[at(6,5)] = 5;
+  const out = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight', P, () => 0.5);
+  const lone = out.energy[at(1,1)], crowded = out.energy[at(5,5)];
+  assert.strictEqual(lone, 5 - 1 + 4 / 1, 'isolated marten gets the whole forage');
+  assert.strictEqual(crowded, 5 - 1 + 4 / 2, 'a marten sharing with one neighbour gets half');
+  assert.ok(crowded < lone, 'crowding must reduce the per-marten share');
+});
+
+test('forage lets martens outlive their prey, and the density self-caps', () => {
+  const COLS = 40, ROWS = 20, N = COLS * ROWS;
+  const run = forage => {
+    const rng = mulberry32(11);
+    const params = { betaRed: 0, betaGrey: 0, sigma: 1, delta: 1, g: 3, eBreed: 10, e0: 5,
+                     breedCost: 5, eCap: 15, mu: 0.5, evadeRed: 0, evadeGrey: 0, forage, gen: 0 };
+    let grid = new Uint8Array(N), energy = new Float32Array(N);   // martens only, zero prey
+    for (let i = 0; i < N; i++) if (rng() < 0.10) { grid[i] = STATES.MARTEN; energy[i] = 8; }
+    for (let gen = 0; gen < 400; gen++) {
+      params.gen = gen;
+      ({ grid, energy } = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight', params, rng));
+    }
+    let n = 0; for (const v of grid) if (v === STATES.MARTEN) n++;
+    return n;
+  };
+  assert.strictEqual(run(0), 0, 'without alternative food, martens starve out when prey is gone');
+  const fed = run(2.0);
+  assert.ok(fed > 0, `with alternative food martens persist on it (got ${fed})`);
+  // Moore-8 crowding caps a no-neighbour packing at ~25% of the grid; the point is
+  // that the shared resource bounds them well short of filling it.
+  assert.ok(fed < N * 0.5, `density must self-cap, not fill the grid (got ${fed} of ${N})`);
+});
+
+test('HYPERPREDATION: subsidised martens extirpate the greys instead of cycling with them', () => {
+  const COLS = 60, ROWS = 30, N = COLS * ROWS;
+  const greysAfter = forage => {
+    const params = { betaRed: 0.10, betaGrey: 0.14, sigma: 0.92, delta: 1.0, g: 3.0, eBreed: 10,
+                     e0: 5, breedCost: 5, eCap: 15, mu: 0.5, evadeRed: 0.70, evadeGrey: 0.05, forage, gen: 0 };
+    const rng = mulberry32(12345), seed = mulberry32(999);
+    let grid = new Uint8Array(N), energy = new Float32Array(N);
+    for (let i = 0; i < N; i++) { const r = seed(); if (r < 0.30) grid[i] = STATES.RED; else if (r < 0.60) grid[i] = STATES.GREY; }
+    for (let gen = 0; gen < 1000; gen++) {
+      if (gen === 300) for (let i = 0; i < N; i++) if (grid[i] !== STATES.MARTEN && rng() < 0.02) { grid[i] = STATES.MARTEN; energy[i] = 8; }
+      params.gen = gen;
+      ({ grid, energy } = stepEcology(grid, energy, COLS, ROWS, 'straight', 'straight', params, rng));
+    }
+    let grey = 0; for (const v of grid) if (v === STATES.GREY) grey++;
+    return grey;
+  };
+  // Unsubsidised martens starve as the greys thin out, so the greys always rebound.
+  assert.ok(greysAfter(0) > 0, 'without alternative food the greys survive by outlasting the predator');
+  // Subsidised martens do not decline with their prey, so the greys get no refuge.
+  assert.strictEqual(greysAfter(1.0), 0, 'with alternative food the greys are extirpated');
+});
+
 test('CASCADE control: symmetric evasion does NOT save the reds', () => {
   const { atIntro, final } = cascadeTrial({ evadeRed: 0.05, evadeGrey: 0.05 });
   assert.ok(final.grey < atIntro.grey * 0.9,
