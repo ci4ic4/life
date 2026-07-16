@@ -824,7 +824,9 @@ dom.addEventListener('pointerdown', e => {
   if (tool !== 'pen') return;
   const cell = cellAt(e); if (!cell) return;
   if (GPU.enabled) GPU.syncToCPU();   // pull live state so the erase/draw toggle + merge see it
-  paintVal = grid[idx(cell[0], cell[1])] ? 0 : penClan + 1;   // first cell decides draw vs erase
+  // Toggle against the SELECTED clan, not "is anything here" — clicking the rival
+  // clan must overpaint it (that is how you build a contact border), not erase it.
+  paintVal = grid[idx(cell[0], cell[1])] === penClan + 1 ? 0 : penClan + 1;   // same clan = erase, else paint
   penAt(cell);
   painting = true; paint(); updateStatus();
 });

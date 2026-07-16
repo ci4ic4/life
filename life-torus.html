@@ -595,8 +595,11 @@ dom.addEventListener('pointerdown', e => {
   if (tool !== 'pen' || e.button !== 0) return;     // left paints; right/mid -> pan
   const cell = cellAt(e); if (!cell) return;
   editPoke();
-  paintVal = grid[idx(cell[0], cell[1])] ? 0 : penType;  // first cell decides draw vs erase
-  grid[idx(cell[0], cell[1])] = paintVal;
+  // Toggle against the SELECTED type, not "is anything here" — with a species
+  // selector, clicking a rival type must overpaint it, not punch a hole.
+  const first = idx(cell[0], cell[1]);
+  paintVal = grid[first] === penType ? 0 : penType;  // same type = erase, else paint
+  grid[first] = paintVal;
   GPU.markDirty();
   painting = true; paint(); updateStatus();
 });
