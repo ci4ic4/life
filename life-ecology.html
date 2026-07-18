@@ -26,13 +26,18 @@
   #status { margin-top:10px; padding-top:8px; border-top:1px solid #2a3340; color:#8a96a6; font-size:11px; }
   #status b { color:#7fd18c; }
   #gen { color:#cdd6e0; }
-  dialog#help { max-width:460px; background:#151a22; color:#b8c2d0; border:1px solid #36424f;
+  dialog.info { max-width:460px; background:#151a22; color:#b8c2d0; border:1px solid #36424f;
         border-radius:10px; padding:18px 20px; font:13px/1.5 system-ui,sans-serif; }
-  dialog#help::backdrop { background:#000a; }
-  dialog#help h2 { margin:0 0 6px; font-size:16px; color:#cdd6e0; }
-  dialog#help h3 { margin:14px 0 4px; font-size:11px; color:#ffd479; letter-spacing:.5px; text-transform:uppercase; }
-  dialog#help ul { margin:4px 0; padding-left:18px; }
-  dialog#help b { color:#cdd6e0; }
+  dialog.info::backdrop { background:#000a; }
+  dialog.info h2 { margin:0 0 6px; font-size:16px; color:#cdd6e0; }
+  dialog.info h3 { margin:14px 0 4px; font-size:11px; color:#ffd479; letter-spacing:.5px; text-transform:uppercase; }
+  dialog.info ul { margin:4px 0; padding-left:18px; }
+  dialog.info b { color:#cdd6e0; }
+  dialog.info a { color:#7fb0ff; text-decoration:none; }
+  dialog.info a:hover { text-decoration:underline; }
+  dialog#credits { max-width:560px; max-height:82vh; overflow-y:auto; }
+  dialog#credits .ref { margin:0 0 9px; padding-left:14px; text-indent:-14px; font-size:12px; }
+  dialog#credits .note { color:#8a96a6; font-size:11.5px; font-style:italic; }
 </style>
 
 <div id="ui">
@@ -148,6 +153,7 @@
   <button id="view2d" style="margin-top:8px; width:100%">▦ 2D view</button>
   <button id="reset" style="margin-top:6px; width:100%">Reset view</button>
   <button id="helpBtn" style="margin-top:6px; width:100%">Help / About</button>
+  <button id="credBtn" style="margin-top:6px; width:100%">Sources &amp; credits</button>
 
   <div id="status">
     Gen <span id="gen">0</span> · pop <span id="pop">0</span><br>
@@ -163,7 +169,7 @@
   </details>
 </div>
 
-<dialog id="help">
+<dialog id="help" class="info">
   <h2>Squirrels &amp; Pine Martens — Ecology on a Torus</h2>
   <p>A spatial contact process on a torus: two rival prey species compete for
   empty ground. <b>Red squirrels</b> (native) and <b>grey squirrels</b>
@@ -321,6 +327,100 @@
   help.</p>
 
   <button id="helpClose" style="margin-top:14px">Close</button>
+</dialog>
+
+<dialog id="credits" class="info">
+  <h2>Sources &amp; credits</h2>
+  <p class="note">This simulation is a teaching toy, not a research model. Every
+  number in it — birth rates, evasion odds, transmission, forage — was tuned by
+  hand until the behaviour matched the story the real studies tell. The numbers
+  are illustrative; the <i>mechanisms</i> are drawn from the peer-reviewed work
+  below, which is where the actual evidence lives. If any of this surprised you,
+  read the real thing.</p>
+
+  <h3>Ireland — where it was first seen</h3>
+  <p>In the Irish midlands the pine marten recovered on its own, and the grey
+  squirrel population collapsed across roughly 9,000&nbsp;km² of its former
+  range, letting red squirrels recolonise woods greys had held for thirty years.
+  This is the clean case the sim reproduces when squirrelpox is switched off —
+  because Irish greys are largely pox-free. <b>Sheehy &amp; Lawton (2014)</b> is
+  the founding paper.</p>
+
+  <h3>Britain — the naïve grey</h3>
+  <p>In Scotland and northern England, <b>Sheehy, Sutherland, O'Reilly &amp;
+  Lambin (2018)</b> — memorably titled <i>“The enemy of my enemy is my
+  friend”</i> — found the mechanism the sim is built around. Where martens were
+  well established, grey squirrels avoided feeders and declined, while reds did
+  <i>better</i>. Greys are North American and have never co-evolved with the
+  marten, so they do not recognise it as a threat; reds do. That single
+  behavioural asymmetry — not the predator's appetite — is what turns the
+  marten into an ally of the native. The predation dynamics themselves are
+  detailed in <b>Twining et&nbsp;al. (2020)</b>.</p>
+
+  <h3>Squirrelpox — the reason Britain is harder than Ireland</h3>
+  <p>Greys carry squirrelpox almost harmlessly; in reds it is nearly always
+  fatal. <b>Tompkins et&nbsp;al. (2003)</b> showed that competition alone cannot
+  explain how fast reds vanished — with the virus present, replacement runs up
+  to about <b>25 times faster</b>. That is the “race the marten loses” in the
+  sim: introduce the pox before the martens arrive and the reds are gone before
+  help exists. The virus itself was described by <b>Sainsbury et&nbsp;al.
+  (2000)</b>.</p>
+
+  <h3>Refuges, and the marten that clears the disease too</h3>
+  <p>Two findings the sim stumbled into turn out to be real. <b>Twining
+  et&nbsp;al. (2021)</b> found declining greys persist in <i>refugia</i> —
+  exactly the conifer-stronghold effect in the “Woodland” panel, where a small
+  refuge reseeds the landscape once the greys are cleared. And <b>Slade
+  et&nbsp;al. (2022)</b> modelled the marten suppressing <i>both</i> the grey
+  and the shared virus — the same double effect you see when the carrier count
+  falls to zero after a marten release.</p>
+
+  <h3>Reintroductions in Wales &amp; England</h3>
+  <p>Unlike Ireland, martens in much of Britain had to be actively brought back.
+  The <b>Vincent Wildlife Trust</b> ran the translocations into mid-Wales and
+  the Forest of Dean — the real-world version of the “Reintroduce martens”
+  button, and the reason it releases a <i>group</i>, not one animal. The
+  <b>BBC</b> report is a plain-language way in.</p>
+
+  <h3>References</h3>
+  <p class="ref">Sheehy, E. &amp; Lawton, C. (2014). Population crash in an
+  invasive species following the recovery of a native predator. <i>Biodiversity
+  and Conservation</i> 23, 753–774.
+  <a href="https://link.springer.com/article/10.1007/s10531-014-0632-7" target="_blank" rel="noopener">link.springer.com</a></p>
+  <p class="ref">Sheehy, E., Sutherland, C., O'Reilly, C. &amp; Lambin, X.
+  (2018). The enemy of my enemy is my friend. <i>Proc. R. Soc. B</i> 285,
+  20172603.
+  <a href="https://doi.org/10.1098/rspb.2017.2603" target="_blank" rel="noopener">doi.org/10.1098/rspb.2017.2603</a></p>
+  <p class="ref">Twining, J.P. et&nbsp;al. (2020). The dynamics of pine marten
+  predation on red and grey squirrels. <i>Mammalian Biology</i> 100, 285–293.
+  <a href="https://link.springer.com/article/10.1007/s42991-020-00031-z" target="_blank" rel="noopener">link.springer.com</a></p>
+  <p class="ref">Tompkins, D.M. et&nbsp;al. (2003). Ecological replacement of
+  native red squirrels by invasive greys driven by disease. <i>Ecology
+  Letters</i> 6, 189–196.
+  <a href="https://onlinelibrary.wiley.com/doi/abs/10.1046/j.1461-0248.2003.00417.x" target="_blank" rel="noopener">onlinelibrary.wiley.com</a></p>
+  <p class="ref">Sainsbury, A.W. et&nbsp;al. Parapoxvirus causes a deleterious
+  disease in red squirrels associated with UK population declines. <i>Proc. R.
+  Soc. B</i>.
+  <a href="https://doi.org/10.1098/rspb.2001.1897" target="_blank" rel="noopener">doi.org/10.1098/rspb.2001.1897</a></p>
+  <p class="ref">Twining, J.P. et&nbsp;al. (2021). Declining invasive grey
+  squirrel populations may persist in refugia. <i>J. Applied Ecology</i> 58,
+  248–260.
+  <a href="https://besjournals.onlinelibrary.wiley.com/doi/10.1111/1365-2664.13660" target="_blank" rel="noopener">besjournals.onlinelibrary.wiley.com</a></p>
+  <p class="ref">Slade, A. et&nbsp;al. (2022). Indirect effects of pine marten
+  recovery benefit native prey through suppression of an invasive species and a
+  shared pathogen. <i>Ecological Modelling</i> 472, 110105.
+  <a href="https://www.sciencedirect.com/science/article/pii/S0304380022003143" target="_blank" rel="noopener">sciencedirect.com</a></p>
+  <p class="ref">Vincent Wildlife Trust — Pine Marten Recovery Project.
+  <a href="https://www.vwt.org.uk/projects-all/pine-marten-recovery-project/" target="_blank" rel="noopener">vwt.org.uk</a></p>
+  <p class="ref">BBC News (2020). Pine martens: The squirrel-eating predator
+  helping red squirrels.
+  <a href="https://www.bbc.co.uk/news/uk-wales-54060331" target="_blank" rel="noopener">bbc.co.uk</a></p>
+
+  <p class="note" style="margin-top:12px">Citations verified against the
+  publishers on 18 July 2026. Article titles and years are given so you can
+  find them even if a link rots.</p>
+
+  <button id="credClose" style="margin-top:14px">Close</button>
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
@@ -568,6 +668,9 @@ $('seedRed').onclick = seedReds;
 $('helpBtn').onclick   = () => $('help').showModal();
 $('helpClose').onclick = () => $('help').close();
 $('help').addEventListener('click', e => { if (e.target === $('help')) $('help').close(); });
+$('credBtn').onclick   = () => $('credits').showModal();
+$('credClose').onclick = () => $('credits').close();
+$('credits').addEventListener('click', e => { if (e.target === $('credits')) $('credits').close(); });
 
 let tool = 'orbit', penSpec = STATES.RED;
 function setTool(t) { tool = t; controls.enabled = true;
