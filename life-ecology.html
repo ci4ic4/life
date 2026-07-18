@@ -143,10 +143,10 @@
   <label>Density on Random (<span id="densv">0.30</span>)</label>
   <input type="range" id="dens" min="0" max="100" value="30">
 
-  <label id="sizeLbl">Grid size (cols × rows, 20–300)</label>
+  <label id="sizeLbl">Grid size (cols × rows, 20–500)</label>
   <div class="row">
-    <input type="number" id="cols" value="80" min="20" max="300">
-    <input type="number" id="rows" value="40" min="20" max="300">
+    <input type="number" id="cols" value="80" min="20" max="500">
+    <input type="number" id="rows" value="40" min="20" max="500">
   </div>
   <button id="apply" style="margin-top:6px; width:100%">Apply size</button>
 
@@ -753,7 +753,9 @@ function rebuild(c, r) {
   freshStart();
 }
 $('apply').onclick = () => {
-  const cap = 300;   // ponytail: CPU-only cap for now, GPU raises this in slice 4
+  // ponytail: CPU-only. Measured ~32 ms/step at 500x500 (~31 fps), still smooth; the
+  // neighbour scan, not allocation, is the cost, so a bigger cap would just crawl.
+  const cap = 500;
   const c = Math.max(20, Math.min(cap, +$('cols').value | 0));
   const r = Math.max(20, Math.min(cap, +$('rows').value | 0));
   $('cols').value = c; $('rows').value = r;
