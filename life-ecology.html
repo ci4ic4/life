@@ -81,10 +81,11 @@
     <label><input type="checkbox" id="mate" checked> Breeding needs a mate</label>
     <label>Background mortality (<span id="mov">0.005</span>) / tick</label>
     <input type="range" id="mo" min="0" max="40" value="5">
-    <label>Release size (<span id="rsv">40</span> martens, as one group)</label>
+    <label>Release size (<span id="rsv">40</span> animals, as one group)</label>
     <input type="range" id="rs" min="1" max="200" value="40">
   </details>
   <button id="seedMart" style="margin-top:6px; width:100%">Reintroduce martens</button>
+  <button id="seedRed" style="margin-top:6px; width:100%">Reintroduce reds</button>
 
   <details class="grp"><summary>Woodland</summary>
     <label>Terrain strength (<span id="tev">0.90</span>) — 0 = uniform wood</label>
@@ -251,6 +252,15 @@
   roads, inbreeding. And because these martens cannot move, two released far
   apart can never pair up at all, so <i>where</i> you release them does work
   that roaming does in reality.</p>
+  <p>You can translocate the reds too — <b>Reintroduce reds</b> drops a healthy
+  founder patch, the same way real programmes do. It matters enormously
+  <i>where</i> it lands. Release reds into grey-held broadleaf and they are
+  mopped up in a few dozen ticks; release them into a conifer refuge, or into
+  ground the martens have just cleared, and they take and spread. So an
+  extinction is not always final here — but only if you fix the habitat or the
+  predator <i>first</i>. Reintroducing reds into the same broadleaf that killed
+  them just feeds them to the greys again, which is exactly why real
+  reinforcement is paired with grey control, not done alone.</p>
 
   <h3>Evasion — why any of this works</h3>
   <p>Reds co-evolved with the marten and evade it; greys are North American,
@@ -390,20 +400,30 @@ function seedPox() {
     infected[greys.splice((Math.random() * greys.length) | 0, 1)[0]] = 1;
   paint(); updateStatus();
 }
-function seedMartens() {
-  // A translocation releases a group at ONE site, so that is what this does. The old
-  // grid-wide scatter quietly begged the question: martens starting everywhere at once
-  // never have to found anything. Release site is random; the group is compact, which
-  // matters because martens cannot move — two released apart can never pair up.
+// A translocation drops a compact group at ONE random site (see the marten note
+// on why compact matters). `fill(i)` writes each freed cell; it returns false to
+// skip a cell already holding the target species so the group reaches its size.
+function releaseGroup(fill) {
   const c0 = (Math.random() * COLS) | 0, r0 = (Math.random() * ROWS) | 0;
   for (let rad = 0, placed = 0; placed < releaseSize && rad < Math.max(COLS, ROWS); rad++)
     for (let dr = -rad; dr <= rad && placed < releaseSize; dr++)
       for (let dc = -rad; dc <= rad && placed < releaseSize; dc++) {
         if (Math.max(Math.abs(dr), Math.abs(dc)) !== rad) continue;   // just this ring
-        const i = idx((c0 + dc + COLS) % COLS, (r0 + dr + ROWS) % ROWS);
-        if (grid[i] !== STATES.MARTEN) { grid[i] = STATES.MARTEN; energy[i] = params.e0 + 3; placed++; }
+        if (fill(idx((c0 + dc + COLS) % COLS, (r0 + dr + ROWS) % ROWS))) placed++;
       }
   paint(); updateStatus();
+}
+// Martens cannot move, so two released apart can never pair — the compact group matters.
+function seedMartens() {
+  releaseGroup(i => grid[i] !== STATES.MARTEN &&
+    (grid[i] = STATES.MARTEN, energy[i] = params.e0 + 3, true));
+}
+// Reds are prey: a healthy (uninfected) founder patch. It spreads on its own by the
+// contact process — but only where the ground and the greys let it, so a release into
+// a conifer refuge takes and one into grey-held broadleaf is usually mopped up.
+function seedReds() {
+  releaseGroup(i => grid[i] !== STATES.RED &&
+    (grid[i] = STATES.RED, energy[i] = 0, infected[i] = 0, true));
 }
 function freshStart() { generation = 0; popHist.length = 0;
   document.getElementById('gen').textContent = '0'; paint(); updateStatus(); }
@@ -544,6 +564,7 @@ $('step').onclick  = () => step();
 $('rand').onclick  = randomize;
 $('clear').onclick = clearGrid;
 $('seedMart').onclick = seedMartens;
+$('seedRed').onclick = seedReds;
 $('helpBtn').onclick   = () => $('help').showModal();
 $('helpClose').onclick = () => $('help').close();
 $('help').addEventListener('click', e => { if (e.target === $('help')) $('help').close(); });
