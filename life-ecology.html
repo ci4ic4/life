@@ -150,6 +150,21 @@
   </div>
   <button id="apply" style="margin-top:6px; width:100%">Apply size</button>
 
+  <details class="grp"><summary>Save &amp; reproduce a run</summary>
+    <label>Run seed — initial board + dice</label>
+    <input type="number" id="bseed" min="0" step="1" style="width:100%; box-sizing:border-box">
+    <label>Woods seed — the terrain</label>
+    <input type="number" id="tseed" min="0" step="1" style="width:100%; box-sizing:border-box">
+    <div class="row">
+      <button id="reseedBtn">Restart from seeds</button>
+      <button id="copyScen">Copy setup</button>
+    </div>
+    <label>Paste a saved setup, then Load</label>
+    <textarea id="scenIn" rows="3" spellcheck="false" style="width:100%; box-sizing:border-box; resize:vertical; font-family:monospace; font-size:10px; background:#0e1218; color:#cdd6e0; border:1px solid #36424f; border-radius:5px; padding:4px"></textarea>
+    <button id="loadScen" style="margin-top:6px; width:100%">Load setup</button>
+    <div id="scenMsg" style="font-size:10px; color:#7fd18c; margin-top:5px; min-height:13px; line-height:1.3"></div>
+  </details>
+
   <button id="view2d" style="margin-top:8px; width:100%">▦ 2D view</button>
   <button id="reset" style="margin-top:6px; width:100%">Reset view</button>
   <button id="helpBtn" style="margin-top:6px; width:100%">Help / About</button>
@@ -311,6 +326,19 @@
   good evasion (the defaults) do you get the real outcome: greys gone, reds
   abundant, martens steady.</p>
 
+  <h3>Saving &amp; reproducing a run</h3>
+  <p>Every run is now driven by two seeds — one for the <b>initial board and the
+  dice</b>, one for the <b>woods</b> — so a run is exactly repeatable rather than
+  different every time. <b>Random</b> and <b>New woods</b> each roll a fresh seed;
+  you can also type a seed in and <b>Restart from seeds</b>.</p>
+  <p><b>Copy setup</b> writes the whole configuration — every parameter, the grid
+  size, and both seeds — as a short line of text. Paste that line back in later and
+  press <b>Load setup</b>, then <b>Play</b>, to reproduce the run exactly. One
+  caveat: this replays a run built by <em>set parameters → Random → Play</em>. If
+  you reproduce an outcome that needed clicking mid-run — introducing martens or the
+  pox at a particular moment — you must repeat those same clicks at the same
+  generations; the seeds alone can't know when you pressed them.</p>
+
   <h3>Controls</h3>
   <ul>
     <li><b>β red / β grey / σ</b> — the ecology knobs; raise σ for
@@ -464,7 +492,23 @@ const TOPOS = { torus:['straight','straight'], klein:['flip','straight'],
                 mobius:['flip','none'], cylinder:['straight','none'] };
 let generation = 0;
 const idx = (c, r) => r * COLS + c;
-let rng = Math.random;
+
+// Seeded RNG so a run is reproducible: the same seeds + params replay the same
+// sequence. mulberry32 is the exact generator the headless tests use, so a saved
+// scenario can even be re-run in Node. boardSeed drives the initial board AND the
+// per-tick dice; the woods carry their own seed, so "New woods" re-rolls terrain
+// without disturbing the run.
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const newSeed = () => (Math.random() * 0x100000000) >>> 0;   // mint a fresh seed (this draw need not be reproducible)
+let boardSeed = newSeed(), terrainSeed = newSeed();
+let rng = mulberry32(boardSeed);
 
 function step() {
   params.gen = generation;
@@ -475,6 +519,7 @@ function step() {
 }
 function randomize() {
   const d = +document.getElementById('dens').value / 100;
+  rng = mulberry32(boardSeed >>> 0);        // a run starts here: reset the dice stream
   energy = new Float32Array(COLS * ROWS);
   infected = new Uint8Array(COLS * ROWS);
   for (let i = 0; i < grid.length; i++)
@@ -491,10 +536,11 @@ function wrapDist2(c0, r0, c1, r1) {
 // normalised to ~[-1,1]. Patches, not white noise -- refuges have to be contiguous
 // or they are not refuges. Negative = conifer (red holds on), positive = broadleaf.
 function generateTerrain() {
+  const trng = mulberry32(terrainSeed >>> 0);   // woods reproducible from their own seed
   const bumps = 9, sigma = Math.min(COLS, ROWS) / 4, twoSig2 = 2 * sigma * sigma;
   env.fill(0);
   for (let b = 0; b < bumps; b++) {
-    const bc = Math.random()*COLS, br = Math.random()*ROWS, amp = (Math.random()*2 - 1);
+    const bc = trng()*COLS, br = trng()*ROWS, amp = (trng()*2 - 1);
     for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++)
       env[r*COLS+c] += amp * Math.exp(-wrapDist2(c, r, bc, br) / twoSig2);
   }
@@ -510,14 +556,14 @@ function seedPox() {
   for (let i = 0; i < grid.length; i++) if (grid[i] === STATES.GREY && !infected[i]) greys.push(i);
   if (!greys.length) { updateStatus(); return; }
   for (let n = 0; n < 20 && greys.length; n++)
-    infected[greys.splice((Math.random() * greys.length) | 0, 1)[0]] = 1;
+    infected[greys.splice((rng() * greys.length) | 0, 1)[0]] = 1;
   paint(); updateStatus();
 }
 // A translocation drops a compact group at ONE random site (see the marten note
 // on why compact matters). `fill(i)` writes each freed cell; it returns false to
 // skip a cell already holding the target species so the group reaches its size.
 function releaseGroup(fill) {
-  const c0 = (Math.random() * COLS) | 0, r0 = (Math.random() * ROWS) | 0;
+  const c0 = (rng() * COLS) | 0, r0 = (rng() * ROWS) | 0;
   for (let rad = 0, placed = 0; placed < releaseSize && rad < Math.max(COLS, ROWS); rad++)
     for (let dr = -rad; dr <= rad && placed < releaseSize; dr++)
       for (let dc = -rad; dc <= rad && placed < releaseSize; dc++) {
@@ -674,7 +720,7 @@ function start() { playing = true;  document.getElementById('play').textContent 
 const $ = id => document.getElementById(id);
 $('play').onclick  = () => playing ? stop() : start();
 $('step').onclick  = () => step();
-$('rand').onclick  = randomize;
+$('rand').onclick  = () => { boardSeed = newSeed(); randomize(); syncSeedUI(); };
 $('clear').onclick = clearGrid;
 $('seedMart').onclick = seedMartens;
 $('seedRed').onclick = seedReds;
@@ -786,7 +832,7 @@ $('mate').onchange = e => { params.mate = e.target.checked; };
 $('mo').oninput  = e => { params.mortality = +e.target.value/1000; $('mov').textContent = params.mortality.toFixed(3); };
 $('rs').oninput  = e => { releaseSize = +e.target.value; $('rsv').textContent = releaseSize; };
 $('te').oninput  = e => { params.terrain   = +e.target.value/100; $('tev').textContent = params.terrain.toFixed(2); paint(); };
-$('newTerr').onclick  = () => { generateTerrain(); paint(); updateStatus(); };
+$('newTerr').onclick  = () => { terrainSeed = newSeed(); generateTerrain(); paint(); updateStatus(); syncSeedUI(); };
 $('flatTerr').onclick = () => flatTerrain();
 $('pb').oninput  = e => { params.poxBeta   = +e.target.value/100; $('pbv').textContent = params.poxBeta.toFixed(2); };
 $('pl').oninput  = e => { params.poxLethal = +e.target.value/100; $('plv').textContent = params.poxLethal.toFixed(2); };
@@ -803,6 +849,65 @@ $('symEvade').onclick = () => {
 $('topo').onchange = e => { [Cwrap, Rwrap] = TOPOS[e.target.value]; };
 $('speed').oninput = e => { gps = +e.target.value; $('spd').textContent = gps; };
 $('dens').oninput  = e => $('densv').textContent = (+e.target.value/100).toFixed(2);
+
+// ---- save / reproduce -------------------------------------------------------
+// A scenario is everything needed to replay a run: the two seeds, the grid, and
+// every parameter. Loading reflects each control by replaying its own input
+// handler (so labels stay in sync), then rebuilds terrain + board from the seeds.
+const SLIDERS = [   // [inputId, paramKey, value -> slider integer]
+  ['br','betaRed',v=>Math.round(v*100)], ['bg','betaGrey',v=>Math.round(v*100)],
+  ['sg','sigma',v=>Math.round(v*100)], ['mg','g',v=>Math.round(v*10)],
+  ['md','delta',v=>Math.round(v*10)], ['meb','eBreed',v=>Math.round(v)],
+  ['mmu','mu',v=>Math.round(v*100)], ['fo','forage',v=>Math.round(v*10)],
+  ['mo','mortality',v=>Math.round(v*1000)], ['er','evadeRed',v=>Math.round(v*100)],
+  ['eg','evadeGrey',v=>Math.round(v*100)], ['pb','poxBeta',v=>Math.round(v*100)],
+  ['pl','poxLethal',v=>Math.round(v*100)], ['te','terrain',v=>Math.round(v*100)],
+];
+const PKEYS = ['betaRed','betaGrey','sigma','g','delta','eBreed','e0','breedCost','eCap',
+  'mu','forage','mate','mortality','evadeRed','evadeGrey','poxBeta','poxLethal','terrain'];
+
+function syncSeedUI() { $('bseed').value = boardSeed >>> 0; $('tseed').value = terrainSeed >>> 0; }
+function scenMsg(t, warn) { const m = $('scenMsg'); m.textContent = t; m.style.color = warn ? '#e0a04a' : '#7fd18c'; }
+
+function collectScenario() {
+  const p = {}; for (const k of PKEYS) p[k] = params[k];
+  return { v:1, cols:COLS, rows:ROWS, dens:+$('dens').value, topo:$('topo').value,
+           releaseSize, boardSeed:boardSeed >>> 0, terrainSeed:terrainSeed >>> 0, params:p };
+}
+function applyScenario(s) {
+  if (!s || s.v !== 1 || !s.params) throw new Error('not a squirrel-sim setup');
+  const c = Math.max(20, Math.min(500, s.cols|0)), r = Math.max(20, Math.min(500, s.rows|0));
+  Object.assign(params, s.params);
+  boardSeed = s.boardSeed >>> 0; terrainSeed = s.terrainSeed >>> 0; releaseSize = s.releaseSize|0;
+  for (const [id, key, toIn] of SLIDERS) { const el = $(id); el.value = toIn(params[key]); el.dispatchEvent(new Event('input')); }
+  $('mate').checked = !!params.mate; $('mate').dispatchEvent(new Event('change'));
+  $('rs').value = releaseSize; $('rs').dispatchEvent(new Event('input'));
+  $('dens').value = s.dens; $('dens').dispatchEvent(new Event('input'));
+  if (TOPOS[s.topo]) { $('topo').value = s.topo; $('topo').dispatchEvent(new Event('change')); }
+  $('cols').value = c; $('rows').value = r;
+  rebuild(c, r);   // reallocates + regenerates terrain from terrainSeed
+  randomize();     // reseeds the dice from boardSeed + rebuilds the board
+  syncSeedUI();
+}
+
+$('reseedBtn').onclick = () => {
+  boardSeed = (+$('bseed').value) >>> 0; terrainSeed = (+$('tseed').value) >>> 0;
+  rebuild(COLS, ROWS); randomize(); syncSeedUI();
+  scenMsg('Restarted. Press Play.');
+};
+$('copyScen').onclick = () => {
+  const json = JSON.stringify(collectScenario());
+  $('scenIn').value = json; $('scenIn').select();
+  if (navigator.clipboard && navigator.clipboard.writeText)
+    navigator.clipboard.writeText(json).then(() => scenMsg('Setup copied — save it somewhere.'),
+                                             () => scenMsg('Setup is in the box below — copy it.'));
+  else scenMsg('Setup is in the box below — copy it.');
+};
+$('loadScen').onclick = () => {
+  let s; try { s = JSON.parse($('scenIn').value); } catch (e) { scenMsg('That is not valid setup text.', true); return; }
+  try { applyScenario(s); scenMsg('Loaded. Press Play to reproduce the run.'); }
+  catch (e) { scenMsg('Could not load: ' + e.message, true); }
+};
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
@@ -833,5 +938,6 @@ selfTest();
 setView(false);
 generateTerrain();
 randomize();
+syncSeedUI();
 requestAnimationFrame(animate);
 </script>
