@@ -1,0 +1,5 @@
+A watchable spatial-ecology simulation of the real England/Wales phenomenon: a small viable pine-marten population suppresses invasive grey squirrels and lets native reds recover. The payoff is a toggle — reintroduce martens and watch greys crash while reds rebound — driven by one asymmetry: reds evade the marten, greys (North-American, ground-naive) do not.
+
+This is inspired by the Life suite and reuses its rendering skin, but its rule is not a B/S Life variant — it is a spatial-ecology CA: contact-process prey growth + conserved WaTor-style predation. The Gaussian σ / B/S-rulestring machinery of the other three files does not come along.
+
+Real-world basis (Sheehy & Lawton et al.; Vincent Wildlife Trust, mid-Wales): grey squirrels spend more time on the ground, are larger, and don't recognise the marten as a threat → the marten's easy, preferred meal; reds co-evolved, stay in the canopy, flee early → low capture rate. The marten works at low density — a sparse travelling predator tips the balance. Habitat (conifer favours reds, broadleaf greys) is real but second-order — deferred.
