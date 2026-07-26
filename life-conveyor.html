@@ -47,8 +47,7 @@
     Tick <span class="k" id="tick">0</span> · efficiency <b id="eff">0.000</b><br>
     Built <span class="k" id="built">0</span> ·
     north <span class="k" id="nsh">—</span> / south <span class="k" id="ssh">—</span><br>
-    On belt <span class="k" id="belt">—</span> ·
-    in hands <span class="k" id="hands">—</span><br>
+    Mix <span class="k" id="mix">—</span><br>
     Fed <span class="k" id="fed">—</span> ·
     wasted <span class="k" id="waste">—</span>
     <div id="warn"></div>
@@ -56,29 +55,43 @@
       style="display:block; margin-top:8px; background:#0e1218; border:1px solid #2a3340; border-radius:5px"></canvas>
   </div>
 
-  <details class="grp" open><summary>Belt</summary>
-    <label>Cells (<span id="ncv">3</span>)</label>
+  <details class="grp" open><summary>Factory</summary>
+    <label>Product mix</label>
+    <select id="preset"></select>
+    <label>Conveyor belts (<span id="nbv">1</span>)</label>
+    <input type="range" id="nb" min="1" max="10" value="1">
+    <label>Cells per belt (<span id="ncv">3</span>)</label>
     <input type="range" id="nc" min="1" max="40" value="3">
     <label>Assembly time (<span id="atv">3</span> ticks)</label>
     <input type="range" id="at" min="0" max="15" value="3">
-    <label>Workers</label>
+  </details>
+
+  <details class="grp" open><summary>Workers</summary>
+    <label>Placement</label>
     <select id="sides">
       <option value="2" selected>Both sides (north + south)</option>
       <option value="1">North only</option>
+    </select>
+    <label>Specialisation</label>
+    <select id="spec">
+      <option value="none" selected>None — anyone builds anything</option>
+      <option value="byBelt">By belt — dedicated lines</option>
+      <option value="bySide">By side — north / south split</option>
+      <option value="roundRobin">Round robin — fully mixed line</option>
     </select>
     <label>Cell priority</label>
     <select id="prio">
       <option value="north" selected>North first (original)</option>
       <option value="alternate">Alternate by tick</option>
     </select>
-    <label>Supply</label>
-    <select id="supply">
-      <option value="random" selected>Random — even A / B / gap</option>
-      <option value="jit">Just-in-time — A, B, A, B, no gaps</option>
-    </select>
   </details>
 
   <details class="grp" open><summary>Run</summary>
+    <label>Supply</label>
+    <select id="supply">
+      <option value="random" selected>Random — even parts / gap</option>
+      <option value="jit">Just-in-time — no gaps</option>
+    </select>
     <div class="row">
       <button id="play">▶ Play</button>
       <button id="step">Step</button>
@@ -111,9 +124,9 @@
 
 <dialog id="help" class="info">
   <h2>Conveyor Assembly</h2>
-  <p>A belt carries parts past workers standing on either side. A worker grabs the parts it
+  <p>Belts carry parts past workers standing on either side. A worker grabs the parts it
   needs, assembles them over several ticks, then waits for an empty cell to put the finished
-  product down. Every tick the belt shifts one cell right; whatever falls off the end is
+  product down. Every tick each belt shifts one cell right; whatever falls off the end is
   counted as waste, and a fresh cell arrives on the left.</p>
 
   <h3>The contested resource</h3>
@@ -121,44 +134,55 @@
   <b>north worker always wins</b> — south only gets the cell if north did nothing with it.
   A worker that is mid-assembly does not need the cell, so it never blocks; and a blocked
   worker can still keep assembling.</p>
-  <p>Switch <b>Cell priority</b> to <i>Alternate</i> and watch the north/south split in the
-  status box. North-first costs south about a fifth of its output and buys no extra
-  throughput at all — the rule is purely about who gets the work, not how much gets done.</p>
+  <p>Switch <b>Cell priority</b> to <i>Alternate</i> and watch the north/south split. North-first
+  costs south about a fifth of its output and buys no extra throughput at all — the rule
+  decides who does the work, not how much gets done.</p>
 
-  <h3>What the numbers mean</h3>
+  <h3>Several belts</h3>
+  <p>Up to ten belts run in parallel from one seeded stream. They do not interact, so output
+  scales with belt count and <b>efficiency</b> — products per belt-movement — stays flat.
+  That is the point of the number: it stays comparable when you add capacity.</p>
+
+  <h3>Several products</h3>
+  <p><b>Product mix</b> swaps in a different set of parts and recipes. Products may use
+  entirely separate parts, or compete for a shared one, or differ in how many parts they
+  take. A product is itself just a part, so a recipe can consume another recipe's output.</p>
+
+  <h3>Worker specialisation</h3>
+  <p>Assign each worker one product and it will only pick up that product's parts — it lets
+  everything else ride past. Two results worth finding:</p>
   <ul>
-    <li><b>Efficiency</b> — finished products per belt movement. The headline number.</li>
-    <li><b>Wasted</b> — raw parts that rode the whole belt untouched. With a short belt or
-    slow assembly, most of the input is thrown away.</li>
-    <li><b>In hands</b> — parts picked up but not yet built into anything.</li>
+    <li><b>Dedicated lines cost about half your throughput</b> — unless you dedicate the
+    supply too. The feed is undifferentiated, so half of what arrives on a dedicated belt is
+    parts its workers refuse to touch, and it rides straight off the end.</li>
+    <li><b>What specialisation buys is control of the mix.</b> With two products competing
+    for a shared part, generalists crowd one out (roughly 2:1 on the shared preset).
+    Specialists split it evenly, for a few percent of throughput.</li>
   </ul>
-
-  <h3>Reproducibility</h3>
-  <p>Every run is driven by one seeded generator, so the same seed and settings replay the
-  same run exactly — in the browser and under <code>node --test</code>. <b>Copy setup</b>
-  puts the whole configuration on the clipboard; <b>Load setup</b> takes it back.</p>
-
-  <h3>Sweep</h3>
-  <p><b>Sweep</b> runs the simulation headlessly across a grid of belt lengths and assembly
-  times and prints the efficiency surface to the browser console. No animation, a few
-  thousand ticks each — this is what the model is actually for.</p>
-
-  <h3>How it is built</h3>
-  <p>The rules live in <code>life-conveyor-core.js</code>, a pure module with no DOM, shared
-  with the Node tests in <code>life-conveyor-core.test.js</code>. Parts are integers and
-  recipes are data — <code>{out, inputs, time}</code> — so more subparts, more products,
-  multi-stage assembly (a product used as an input) and alternative delivery policies are
-  configuration, not new code.</p>
+  <p><i>By belt</i> with fewer belts than products leaves the later products with nobody
+  assigned, so they are never built at all. The panel warns when that happens.</p>
 
   <h3>Try the just-in-time supply</h3>
-  <p>The <i>Just-in-time</i> option replaces the random feed with a perfect alternating
-  delivery — exactly the parts needed, in order, no gaps ever. Throughput collapses to
-  almost nothing.</p>
+  <p>The <i>Just-in-time</i> option replaces the random feed with a perfect delivery —
+  exactly the parts needed, in order, no gaps ever. Throughput collapses to almost nothing.</p>
   <p>That is not a fault. A finished product needs an <b>empty cell</b> to leave on, and a
   supply that never sends a gap never provides one, so every worker ends up permanently
   holding a product it cannot put down. <b>The idle cells in the random feed are not waste
   — they are the output channel.</b> A real line needs outbound capacity as much as it
   needs parts, and any delivery schedule worth the name has to reserve some.</p>
+
+  <h3>Reproducibility and sweeps</h3>
+  <p>One seeded generator drives everything, so the same seed and settings replay the same
+  run exactly — in the browser and under <code>node --test</code>. <b>Copy setup</b> puts the
+  configuration on the clipboard; <b>Load setup</b> takes it back. <b>Sweep</b> runs the model
+  headlessly across belt lengths and assembly times and prints the efficiency surface to the
+  console — a surface, not a picture, is what the model is actually for.</p>
+
+  <h3>How it is built</h3>
+  <p>The rules live in <code>life-conveyor-core.js</code>, a pure module with no DOM, shared
+  with the Node tests in <code>life-conveyor-core.test.js</code>. Parts are integers and
+  recipes are data — <code>{out, inputs, time}</code> — so more subparts, more products,
+  multi-stage assembly and alternative delivery policies are configuration, not new code.</p>
   <p>Ported from a 2018 conveyor assignment, originally Python
   (<code>simulate_conveyor.py</code>), whose three correctness invariants — component
   conservation, worker-state validity and cell mutual exclusion — are checked here on every
@@ -171,30 +195,41 @@
 const K = LifeConveyor;
 const $ = id => document.getElementById(id);
 
-// ---- configuration --------------------------------------------------------
-// The panel edits a plain config object; the core never sees the DOM. Adding a
-// recipe or a part is an edit to this object, nothing else.
+// The panel edits a plain config object; the core never sees the DOM. Adding a recipe
+// or a part is an edit to that object, nothing else.
 let cfg = K.defaultConfig();
 let seed = (Math.random() * 0x100000000) >>> 0;
 let st = null, playing = false, speed = 12, acc = 0, last = 0;
 
-// Strict JIT: hand the belt exactly the parts a recipe needs, in order, forever.
+// Strict JIT: hand the belts exactly the parts a recipe needs, in order, forever.
 // Demonstrates the supply hook — a storehouse or a delivery schedule is the same
 // signature with more state behind it.
-function jitSupply(_rng, tick, c) {
+function jitSupply(_rng, tick, c, belt) {
   const raw = K.rawParts(c);
-  return raw[tick % raw.length];
+  return raw[(tick + (belt || 0)) % raw.length];
+}
+
+for (const [key, p] of Object.entries(K.PRESETS)) {
+  const o = document.createElement('option');
+  o.value = key; o.textContent = p.label;
+  $('preset').appendChild(o);
 }
 
 function readPanel() {
-  cfg.numCells = +$('nc').value;
-  cfg.sides = +$('sides').value;
-  cfg.priority = $('prio').value;
-  cfg.recipes = [{ out: 3, inputs: [1, 2], time: +$('at').value }];
-  cfg.supply = $('supply').value === 'jit' ? jitSupply : null;
+  const time = +$('at').value;
+  cfg = K.configFrom($('preset').value, {
+    numCells: +$('nc').value,
+    numBelts: +$('nb').value,
+    sides: +$('sides').value,
+    priority: $('prio').value,
+    specialisation: $('spec').value,
+    supply: $('supply').value === 'jit' ? jitSupply : null,
+  });
+  cfg.recipes.forEach(r => { r.time = time; });
   speed = +$('sp').value;
+  $('nbv').textContent = cfg.numBelts;
   $('ncv').textContent = cfg.numCells;
-  $('atv').textContent = cfg.recipes[0].time;
+  $('atv').textContent = time;
   $('spv').textContent = speed;
 }
 
@@ -208,89 +243,108 @@ function reset() {
 
 // ---- drawing --------------------------------------------------------------
 const cv = $('view'), ctx = cv.getContext('2d');
-function resize() {
-  cv.width = innerWidth; cv.height = innerHeight;
-  draw();
-}
+function resize() { cv.width = innerWidth; cv.height = innerHeight; draw(); }
 addEventListener('resize', resize);
 
 const partColor = id => (K.partById(cfg, id) || {}).color || '#8a96a6';
 const partChar = id => (K.partById(cfg, id) || {}).char || '?';
+/** Colour of the product a worker is assigned to, or null for a generalist. */
+const workerColor = w => w.recipes ? partColor(cfg.recipes[w.recipes[0]].out) : null;
 
 function chip(x, y, w, h, id, alpha) {
   ctx.globalAlpha = alpha === undefined ? 1 : alpha;
   ctx.fillStyle = partColor(id);
   ctx.fillRect(x, y, w, h);
   ctx.globalAlpha = 1;
-  ctx.fillStyle = '#0a0c10';
-  ctx.font = `bold ${Math.min(h * 0.6, w * 0.7) | 0}px system-ui`;
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(partChar(id), x + w / 2, y + h / 2 + 1);
+  const fs = Math.min(h * 0.62, w * 0.72) | 0;
+  if (fs >= 7) {
+    ctx.fillStyle = '#0a0c10';
+    ctx.font = `bold ${fs}px system-ui`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(partChar(id), x + w / 2, y + h / 2 + 1);
+  }
 }
 
-/** One worker: held parts, or an assembly progress bar, or the product it carries. */
+/** One worker: held parts, or an assembly progress bar, or the product it carries.
+ *  A specialist's frame is tinted with its product colour. */
 function drawWorker(w, x, y, cw, ch) {
+  const mine = workerColor(w);
   const busy = w.building || w.product !== K.EMPTY || w.held.some(c => c > 0);
-  ctx.strokeStyle = busy ? '#4a5867' : '#2a3340';
   ctx.fillStyle = '#151a22';
-  ctx.fillRect(x, y, cw, ch); ctx.strokeRect(x + .5, y + .5, cw - 1, ch - 1);
+  ctx.fillRect(x, y, cw, ch);
+  ctx.strokeStyle = mine || (busy ? '#4a5867' : '#2a3340');
+  ctx.globalAlpha = mine && !busy ? 0.5 : 1;
+  ctx.strokeRect(x + .5, y + .5, cw - 1, ch - 1);
+  ctx.globalAlpha = 1;
 
   if (w.building) {
     const r = cfg.recipes[w.building.ri];
     const p = r.time ? 1 - w.building.remaining / r.time : 1;
-    ctx.fillStyle = '#3a4757';
-    ctx.fillRect(x + 3, y + ch - 8, cw - 6, 5);
-    ctx.fillStyle = '#ffd479';
-    ctx.fillRect(x + 3, y + ch - 8, (cw - 6) * p, 5);
-    ctx.fillStyle = '#8a96a6'; ctx.font = '9px system-ui'; ctx.textAlign = 'center';
-    ctx.fillText('assembling', x + cw / 2, y + ch / 2 - 2);
+    const bh = Math.max(3, ch * 0.12);
+    ctx.fillStyle = '#3a4757'; ctx.fillRect(x + 3, y + ch - bh - 3, cw - 6, bh);
+    ctx.fillStyle = '#ffd479'; ctx.fillRect(x + 3, y + ch - bh - 3, (cw - 6) * p, bh);
+    if (ch > 26) {
+      ctx.fillStyle = '#8a96a6'; ctx.font = '9px system-ui'; ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('assembling', x + cw / 2, y + ch / 2 - 2);
+    }
     return;
   }
-  if (w.product !== K.EMPTY) { chip(x + 4, y + 4, cw - 8, ch - 8, w.product); return; }
+  if (w.product !== K.EMPTY) { chip(x + 3, y + 3, cw - 6, ch - 6, w.product); return; }
 
   const held = [];
   for (let p = 1; p < w.held.length; p++) for (let n = 0; n < w.held[p]; n++) held.push(p);
   if (!held.length) return;
-  const s = Math.min((cw - 6) / held.length, ch - 8);
-  held.forEach((p, i) => chip(x + 3 + i * s, y + (ch - s) / 2, s - 2, s, p, .85));
+  const s = Math.min((cw - 6) / held.length, ch - 6);
+  held.forEach((p, i) => chip(x + 3 + i * s, y + (ch - s) / 2, s - 1, s, p, .85));
 }
 
 function draw() {
   if (!st) return;
   ctx.clearRect(0, 0, cv.width, cv.height);
   // x0 clears the control panel — the "supply →" label is drawn to the left of it
-  const x0 = 380, right = cv.width - 40, n = cfg.numCells;
+  // x0 clears the control panel; the right margin leaves room for the "→ waste" label,
+  // which otherwise runs off the canvas once the belt is long enough to hit the cap.
+  const x0 = 380, right = cv.width - 95, n = cfg.numCells, nb = cfg.numBelts;
   const cw = Math.max(9, Math.min(88, (right - x0) / n));
   const beltW = cw * n;
-  const ch = Math.min(64, cw * 1.05), midY = cv.height / 2, beltY = midY - ch / 2;
-  const gap = 10;                                  // belt-to-worker clearance
+  const rowsPerBelt = cfg.sides > 1 ? 3 : 2;
+  const top = 34, availH = cv.height - top - 24;
+  const groupH = availH / nb;
+  // rows must fit the group with a little air between belts
+  const ch = Math.max(11, Math.min(cw * 1.05, 60, (groupH - 16) / rowsPerBelt));
+  const gap = Math.max(3, ch * 0.16);
 
-  // the belt itself — a track the cells sit on, so it reads as a machine and not a grid
-  ctx.fillStyle = '#171d26';
-  ctx.fillRect(x0 - 8, beltY - 5, beltW + 16, ch + 10);
-  ctx.strokeStyle = '#39485a'; ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(x0 - 8, beltY - 5); ctx.lineTo(x0 + beltW + 8, beltY - 5);
-  ctx.moveTo(x0 - 8, beltY + ch + 5); ctx.lineTo(x0 + beltW + 8, beltY + ch + 5);
-  ctx.stroke(); ctx.lineWidth = 1;
+  ctx.textBaseline = 'alphabetic';
+  for (let b = 0; b < nb; b++) {
+    const belt = st.belts[b];
+    const blockH = ch * rowsPerBelt + gap * (rowsPerBelt - 1);
+    const yTop = top + b * groupH + Math.max(0, (groupH - blockH) / 2);
+    const beltY = yTop + ch + gap;                       // north row sits above
 
-  ctx.font = '11px system-ui'; ctx.textBaseline = 'alphabetic';
-  ctx.fillStyle = '#7fb0ff'; ctx.textAlign = 'right';
-  ctx.fillText('supply →', x0 - 14, beltY + ch / 2 + 4);
-  ctx.fillStyle = '#e0a04a'; ctx.textAlign = 'left';
-  ctx.fillText('→ waste', x0 + beltW + 14, beltY + ch / 2 + 4);
+    ctx.fillStyle = '#171d26';
+    ctx.fillRect(x0 - 8, beltY - 4, beltW + 16, ch + 8);
+    ctx.strokeStyle = '#39485a'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x0 - 8, beltY - 4); ctx.lineTo(x0 + beltW + 8, beltY - 4);
+    ctx.moveTo(x0 - 8, beltY + ch + 4); ctx.lineTo(x0 + beltW + 8, beltY + ch + 4);
+    ctx.stroke(); ctx.lineWidth = 1;
 
-  ctx.fillStyle = '#8a96a6';
-  ctx.fillText('north workers', x0, beltY - ch - gap - 8);
-  if (cfg.sides > 1) ctx.fillText('south workers', x0, beltY + ch * 2 + gap + 20);
+    ctx.font = '11px system-ui';
+    ctx.fillStyle = '#7fb0ff'; ctx.textAlign = 'right';
+    ctx.fillText(nb > 1 ? `belt ${b + 1} →` : 'supply →', x0 - 14, beltY + ch / 2 + 4);
+    ctx.fillStyle = '#e0a04a'; ctx.textAlign = 'left';
+    ctx.fillText('→ waste', x0 + beltW + 14, beltY + ch / 2 + 4);
 
-  for (let i = 0; i < n; i++) {
-    const x = x0 + i * cw;
-    ctx.fillStyle = '#0e1218'; ctx.strokeStyle = '#2a3340';
-    ctx.fillRect(x, beltY, cw, ch); ctx.strokeRect(x + .5, beltY + .5, cw - 1, ch - 1);
-    if (st.cells[i] !== K.EMPTY) chip(x + 3, beltY + 3, cw - 6, ch - 6, st.cells[i]);
-    drawWorker(K.workerAt(st, cfg, K.NORTH, i), x, beltY - ch - gap, cw, ch);
-    if (cfg.sides > 1) drawWorker(K.workerAt(st, cfg, K.SOUTH, i), x, beltY + ch + gap, cw, ch);
+    for (let i = 0; i < n; i++) {
+      const x = x0 + i * cw;
+      ctx.fillStyle = '#0e1218'; ctx.strokeStyle = '#2a3340';
+      ctx.fillRect(x, beltY, cw, ch); ctx.strokeRect(x + .5, beltY + .5, cw - 1, ch - 1);
+      if (belt[i] !== K.EMPTY) chip(x + 3, beltY + 3, cw - 6, ch - 6, belt[i]);
+      drawWorker(K.workerAt(st, cfg, K.NORTH, i, b), x, yTop, cw, ch);
+      if (cfg.sides > 1)
+        drawWorker(K.workerAt(st, cfg, K.SOUTH, i, b), x, beltY + ch + gap, cw, ch);
+    }
   }
 }
 
@@ -300,11 +354,12 @@ const sum = arr => Array.from(arr).reduce((a, b) => a + b, 0);
 
 function updateStatus() {
   const s = st.stats;
-  const belt = K.onBelt(st, cfg), hands = K.heldByWorkers(st, cfg);
   const share = K.sideShare(st, cfg);
-  const built = cfg.recipes.reduce((a, r) => a + s.produced[r.out], 0);
-  const wasted = K.rawParts(cfg).reduce((a, p) => a + s.removed[p], 0);
-  const fed = K.rawParts(cfg).reduce((a, p) => a + s.placed[p], 0);
+  const mix = K.productMix(st, cfg);
+  const built = mix.reduce((a, m) => a + m.built, 0);
+  const raw = K.rawParts(cfg);
+  const wasted = raw.reduce((a, p) => a + s.removed[p], 0);
+  const fed = raw.reduce((a, p) => a + s.placed[p], 0);
   const eff = K.efficiency(st, cfg);
 
   $('tick').textContent = st.tick;
@@ -312,13 +367,20 @@ function updateStatus() {
   $('built').textContent = built;
   $('nsh').textContent = share.length ? (share[0] * 100).toFixed(0) + '%' : '—';
   $('ssh').textContent = share.length > 1 ? (share[1] * 100).toFixed(0) + '%' : '—';
-  $('belt').textContent = sum(belt);
-  $('hands').textContent = sum(hands);
+  $('mix').textContent = mix.map(m => `${partChar(m.product)} ${m.built}`).join(' · ');
   $('fed').textContent = fed;
   $('waste').textContent = wasted + (fed ? ` (${(wasted / fed * 100).toFixed(0)}%)` : '');
 
+  const notes = [];
   const bad = K.conservation(st, cfg).filter(r => r.delta !== 0);
-  $('warn').textContent = bad.length ? 'CONSERVATION BROKEN: ' + JSON.stringify(bad) : '';
+  if (bad.length) notes.push('CONSERVATION BROKEN: ' + JSON.stringify(bad));
+  // the byBelt footgun: recipe = belt % nRecipes, so short of belts nobody is assigned
+  // to the later products and they are never built at all
+  if (cfg.specialisation === 'byBelt' && cfg.numBelts < cfg.recipes.length)
+    notes.push(`Only ${cfg.numBelts} belt(s) for ${cfg.recipes.length} products — the rest are assigned to nobody and will never be built.`);
+  if (cfg.specialisation !== 'none' && cfg.recipes.length < 2)
+    notes.push('This product mix has one product, so specialisation does nothing.');
+  $('warn').textContent = notes.join(' ');
 
   hist.push({ eff, north: share[0] || 0 });
   if (hist.length > HIST_MAX) hist.shift();
@@ -329,10 +391,9 @@ function drawChart() {
   const c = $('chart'), g = c.getContext('2d'), W = c.width, H = c.height, pad = 5;
   g.clearRect(0, 0, W, H);
   const x = i => pad + (i / (HIST_MAX - 1)) * (W - 2 * pad);
-  // efficiency is a rate in [0,1] but rarely above .5, so autoscale the top
-  const top = Math.max(0.1, ...hist.map(h => h.eff)) * 1.15;
+  const top = Math.max(0.1, ...hist.map(h => h.eff)) * 1.15;   // autoscale efficiency
   g.strokeStyle = '#2a3340'; g.beginPath();
-  g.moveTo(pad, H / 2); g.lineTo(W - pad, H / 2); g.stroke();   // the 50% fairness line
+  g.moveTo(pad, H / 2); g.lineTo(W - pad, H / 2); g.stroke();  // the 50% fairness line
 
   const line = (key, colour, scale) => {
     g.strokeStyle = colour; g.lineWidth = 1.5; g.beginPath();
@@ -367,17 +428,26 @@ function frame(now) {
 
 // ---- scenario save / load -------------------------------------------------
 function collectScenario() {
-  return { v: 1, sim: 'conveyor', numCells: cfg.numCells, sides: cfg.sides,
-           priority: cfg.priority, supply: $('supply').value,
+  return { v: 2, sim: 'conveyor', preset: cfg.preset, numCells: cfg.numCells,
+           numBelts: cfg.numBelts, sides: cfg.sides, priority: cfg.priority,
+           specialisation: cfg.specialisation, supply: $('supply').value,
            time: cfg.recipes[0].time, seed: seed >>> 0 };
 }
 function applyScenario(s) {
-  if (!s || s.v !== 1 || s.sim !== 'conveyor') throw new Error('not a conveyor setup');
+  if (!s || s.sim !== 'conveyor') throw new Error('not a conveyor setup');
+  if (s.v !== 1 && s.v !== 2) throw new Error('unknown setup version ' + s.v);
+  const pick = (id, val, fallback) => {
+    const el = $(id);
+    el.value = [...el.options].some(o => o.value === String(val)) ? String(val) : fallback;
+  };
   $('nc').value = Math.max(1, Math.min(40, s.numCells | 0));
+  $('nb').value = Math.max(1, Math.min(K.MAX_BELTS, (s.numBelts | 0) || 1));
   $('at').value = Math.max(0, Math.min(15, s.time | 0));
-  $('sides').value = String(s.sides === 1 ? 1 : 2);
-  $('prio').value = s.priority === 'alternate' ? 'alternate' : 'north';
-  $('supply').value = s.supply === 'jit' ? 'jit' : 'random';
+  pick('preset', s.preset || 'simple', 'simple');          // v1 setups predate presets
+  pick('sides', s.sides === 1 ? 1 : 2, '2');
+  pick('prio', s.priority, 'north');
+  pick('spec', s.specialisation || 'none', 'none');
+  pick('supply', s.supply, 'random');
   seed = s.seed >>> 0;
   reset();
 }
@@ -387,19 +457,19 @@ const scenMsg = (t, warn) => {
 
 // ---- headless sweep -------------------------------------------------------
 // The point of the model: a surface, not a picture. Console output so it can be
-// copied out; the belt keeps whatever state it had.
+// copied out; the belts keep whatever state they had.
 function sweep() {
-  const cells = [1, 2, 3, 4, 6, 8, 12, 20];
-  const times = [0, 1, 2, 3, 5, 8];
   const rows = [];
-  for (const numCells of cells) {
+  for (const numCells of [1, 2, 3, 4, 6, 8, 12, 20]) {
     const row = { cells: numCells };
-    for (const time of times) {
+    for (const time of [0, 1, 2, 3, 5, 8]) {
       let e = 0;
       for (let s = 1; s <= 8; s++) {
-        const c = Object.assign({}, cfg, {
-          numCells, recipes: [{ out: 3, inputs: [1, 2], time }],
+        const c = K.configFrom(cfg.preset, {
+          numCells, numBelts: cfg.numBelts, sides: cfg.sides,
+          priority: cfg.priority, specialisation: cfg.specialisation, supply: cfg.supply,
         });
+        c.recipes.forEach(r => { r.time = time; });
         e += K.runTrial(c, s, 2000).efficiency;
       }
       row['t=' + time] = +(e / 8).toFixed(4);
@@ -411,7 +481,7 @@ function sweep() {
 }
 
 // ---- wiring ---------------------------------------------------------------
-for (const id of ['nc', 'at', 'sides', 'prio', 'supply'])
+for (const id of ['preset', 'nb', 'nc', 'at', 'sides', 'spec', 'prio', 'supply'])
   $(id).addEventListener('input', reset);
 $('sp').addEventListener('input', readPanel);
 $('play').onclick = () => {
@@ -443,11 +513,12 @@ $('helpClose').onclick = () => $('help').close();
 // Same spirit as the other sims' boot checks: prove the core is reachable and that
 // the invariants the Python original guaranteed still hold here.
 function selfTest() {
-  const c = K.defaultConfig();
-  const r = K.runTrial(c, 12345, 400);
-  console.assert(r.conserved, 'self-test: components are not conserved');
-  console.assert(K.workerStatesValid(r.state), 'self-test: invalid worker state');
-  console.assert(r.efficiency > 0, 'self-test: nothing was built');
+  for (const preset of Object.keys(K.PRESETS)) {
+    const r = K.runTrial(K.configFrom(preset, { numCells: 6, numBelts: 2 }), 12345, 400);
+    console.assert(r.conserved, `self-test: ${preset} does not conserve parts`);
+    console.assert(K.workerStatesValid(r.state), `self-test: ${preset} invalid worker state`);
+    console.assert(r.efficiency > 0, `self-test: ${preset} built nothing`);
+  }
 }
 selfTest();
 resize();

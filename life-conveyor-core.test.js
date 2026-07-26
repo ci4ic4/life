@@ -79,7 +79,7 @@ test('a worker holding a product cannot pick up', () => {
   C.step(st, cfg);
   assert.equal(w.held[1], 0, 'hands full, so the A goes by untouched');
   assert.equal(w.product, 3, 'still carrying it — the cell was occupied');
-  assert.equal(st.cells[0], 1, 'the A stays on the belt');
+  assert.equal(st.belts[0][0], 1, 'the A stays on the belt');
 });
 
 test('a worker holding a product puts it on the first empty cell', () => {
@@ -89,7 +89,7 @@ test('a worker holding a product puts it on the first empty cell', () => {
   w.product = 3;
   C.step(st, cfg);
   assert.equal(w.product, C.EMPTY, 'hands free again');
-  assert.equal(st.cells[0], 3, 'product is on the belt');
+  assert.equal(st.belts[0][0], 3, 'product is on the belt');
 });
 
 // --- invariant 1: component conservation --------------------------------------
@@ -131,7 +131,7 @@ test('north takes the cell and south is blocked that tick', () => {
   C.step(st, cfg);
   assert.equal(C.workerAt(st, cfg, C.NORTH, 0).held[1], 1);
   assert.equal(C.workerAt(st, cfg, C.SOUTH, 0).held[1], 0);
-  assert.equal(st.cells[0], C.EMPTY, 'the part left the belt exactly once');
+  assert.equal(st.belts[0][0], C.EMPTY, 'the part left the belt exactly once');
 });
 
 test('a blocked worker still advances an assembly in progress', () => {
@@ -151,13 +151,13 @@ test('same seed and config reproduce the run exactly', () => {
   const b = C.runTrial(cfgAB({ numCells: 5 }), 12345, 700);
   assert.equal(a.efficiency, b.efficiency);
   assert.deepEqual(a.produced, b.produced);
-  assert.deepEqual(Array.from(a.state.cells), Array.from(b.state.cells));
+  assert.deepEqual(Array.from(a.state.belts[0]), Array.from(b.state.belts[0]));
 });
 
 test('a different seed gives a different run', () => {
   const a = C.runTrial(cfgAB({ numCells: 5 }), 1, 700);
   const b = C.runTrial(cfgAB({ numCells: 5 }), 2, 700);
-  assert.notDeepEqual(Array.from(a.state.cells), Array.from(b.state.cells));
+  assert.notDeepEqual(Array.from(a.state.belts[0]), Array.from(b.state.belts[0]));
 });
 
 // --- correctness: efficiency ---------------------------------------------------
@@ -229,7 +229,7 @@ test('a gapless just-in-time feed deadlocks the line', () => {
   } });
   const r = C.runTrial(cfg, 1, 2000);
   assert.ok(r.conserved, 'a deadlocked line still conserves parts');
-  assert.ok(r.state.cells.every(v => v !== C.EMPTY), 'belt is saturated');
+  assert.ok(r.state.belts.every(b => b.every(v => v !== C.EMPTY)), 'belts are saturated');
   assert.ok(r.state.workers.every(w => w.product !== C.EMPTY),
     'every worker is stuck holding a finished product');
   // only the startup transient, while the belt was still empty, ever shipped
@@ -282,4 +282,150 @@ test('one-sided belts work (sides = 1)', () => {
   assert.ok(r.conserved);
   assert.equal(r.state.workers.length, 4);
   assert.equal(r.sideShare.length, 1);
+});
+
+// =============================================================================
+// Parallel belts
+// =============================================================================
+test('a belt count builds the right number of workers and belts', () => {
+  const cfg = cfgAB({ numCells: 4, numBelts: 3, sides: 2 });
+  const st = C.createState(cfg, 1);
+  assert.equal(st.belts.length, 3);
+  assert.equal(st.workers.length, 3 * 2 * 4);
+  // workerAt is belt-major: distinct belts must give distinct workers
+  assert.notEqual(C.workerAt(st, cfg, C.NORTH, 0, 0), C.workerAt(st, cfg, C.NORTH, 0, 1));
+  assert.equal(C.workerAt(st, cfg, C.NORTH, 0, 2).belt, 2);
+});
+
+test('belts default to one when a config omits the field', () => {
+  const st = C.createState(cfg3(), 1);   // hand-built, no numBelts
+  assert.equal(st.belts.length, 1);
+});
+
+test('output scales with belt count while efficiency stays flat', () => {
+  const at = numBelts => {
+    let eff = 0, built = 0;
+    for (let s = 1; s <= 6; s++) {
+      const r = C.runTrial(cfgAB({ numCells: 6, numBelts }), s, 2000);
+      eff += r.efficiency / 6; built += r.produced[3] / 6;
+    }
+    return { eff, built };
+  };
+  const one = at(1), eight = at(8);
+  assert.ok(Math.abs(one.eff - eight.eff) < 0.02,
+    `efficiency is per belt-movement so it should not move: ${one.eff} vs ${eight.eff}`);
+  assert.ok(eight.built > one.built * 7, 'eight belts build about eight times as much');
+});
+
+test('conservation holds across ten belts', () => {
+  const r = C.runTrial(cfgAB({ numCells: 5, numBelts: C.MAX_BELTS }), 3, 1200);
+  assert.ok(r.conserved);
+  assert.equal(r.state.belts.length, 10);
+});
+
+// =============================================================================
+// Several products, several part sets
+// =============================================================================
+test.describe('every preset runs, conserves and builds all its products', () => {
+  for (const name of Object.keys(C.PRESETS)) {
+    test(name, () => {
+      const cfg = C.configFrom(name, { numCells: 8, numBelts: 2 });
+      const r = C.runTrial(cfg, 5, 3000);
+      assert.ok(r.conserved, 'parts are conserved');
+      for (const m of r.productMix)
+        assert.ok(m.built > 0, `product ${m.product} was never built`);
+    });
+  }
+});
+
+test('a preset with disjoint part sets keeps the two products independent', () => {
+  const cfg = C.configFrom('twoLines', { numCells: 6 });
+  assert.deepEqual(C.rawParts(cfg), [1, 2, 3, 4]);
+  assert.deepEqual(cfg.recipes.map(r => r.out), [5, 6]);
+});
+
+// =============================================================================
+// Worker specialisation
+// =============================================================================
+test('specialisation is a no-op when there is only one product', () => {
+  const cfg = cfgAB({ numCells: 3, specialisation: 'byBelt' });
+  const st = C.createState(cfg, 1);
+  assert.ok(st.workers.every(w => w.recipes === null), 'nothing to specialise in');
+});
+
+test('a specialist ignores the other product parts entirely', () => {
+  const cfg = C.configFrom('twoLines', { numCells: 3, numBelts: 2, specialisation: 'byBelt' });
+  const st = C.createState(cfg, 1);
+  const x = C.workerAt(st, cfg, C.NORTH, 0, 0);   // belt 0 -> recipe 0 -> parts A,B
+  const y = C.workerAt(st, cfg, C.NORTH, 0, 1);   // belt 1 -> recipe 1 -> parts C,D
+  assert.deepEqual(x.recipes, [0]);
+  assert.deepEqual(y.recipes, [1]);
+  assert.ok(C.wants(cfg, x, 1) && C.wants(cfg, x, 2), 'X-builder takes A and B');
+  assert.ok(!C.wants(cfg, x, 3) && !C.wants(cfg, x, 4), 'and will not touch C or D');
+  assert.ok(C.wants(cfg, y, 3) && C.wants(cfg, y, 4), 'Y-builder takes C and D');
+  assert.ok(!C.wants(cfg, y, 1), 'and will not touch A');
+});
+
+test('each specialisation mode assigns along its own axis', () => {
+  const mk = specialisation => C.createState(
+    C.configFrom('twoLines', { numCells: 4, numBelts: 2, specialisation }), 1);
+  const byBelt = mk('byBelt');
+  assert.ok(byBelt.workers.every(w => w.recipes[0] === w.belt % 2));
+  const bySide = mk('bySide');
+  assert.ok(bySide.workers.every(w => w.recipes[0] === w.side % 2));
+  const rr = mk('roundRobin');
+  assert.ok(rr.workers.every(w => w.recipes[0] === (w.cell + w.side) % 2));
+});
+
+test('all specialisation modes still conserve', () => {
+  for (const specialisation of ['none', 'byBelt', 'bySide', 'roundRobin']) {
+    const cfg = C.configFrom('shared', { numCells: 6, numBelts: 2, specialisation });
+    assert.ok(C.runTrial(cfg, 9, 1500).conserved, `${specialisation} leaked parts`);
+  }
+});
+
+// The configuration trap: byBelt hands worker w the recipe (w.belt % nRecipes), so with
+// fewer belts than products the later products get nobody and are never built at all.
+// The UI warns about this; the test makes sure the warning stays true.
+test('byBelt with fewer belts than products starves the extra products', () => {
+  const cfg = C.configFrom('twoLines', { numCells: 6, numBelts: 1, specialisation: 'byBelt' });
+  const r = C.runTrial(cfg, 5, 3000);
+  assert.ok(r.conserved);
+  assert.ok(r.productMix[0].built > 0, 'the first product is fine');
+  assert.equal(r.productMix[1].built, 0, 'nobody on any belt is allowed to build it');
+});
+
+// Dedicating a line to a product does NOT pay unless the supply is dedicated too: the
+// feed is undifferentiated, so half of what reaches a dedicated belt is parts its
+// workers refuse to touch, and it rides straight off the end.
+test('dedicated lines on a shared supply roughly halve throughput', () => {
+  const eff = specialisation => {
+    let e = 0;
+    for (let s = 1; s <= 6; s++)
+      e += C.runTrial(C.configFrom('twoLines',
+        { numCells: 6, numBelts: 2, specialisation }), s, 2500).efficiency / 6;
+    return e;
+  };
+  const generalist = eff('none'), dedicated = eff('byBelt');
+  assert.ok(dedicated < generalist * 0.75,
+    `dedicated ${dedicated.toFixed(3)} should fall well short of ${generalist.toFixed(3)}`);
+});
+
+// What specialisation buys, when it buys anything: control of the product mix.
+// Generalists resolve a tie towards the first satisfiable recipe, so with two products
+// competing for one shared part the first one crowds the other out.
+test('specialisation balances the product mix that generalists skew', () => {
+  const skew = specialisation => {
+    let s = 0;
+    for (let seed = 1; seed <= 6; seed++) {
+      const m = C.runTrial(C.configFrom('shared',
+        { numCells: 6, numBelts: 2, specialisation }), seed, 2500).productMix;
+      const tot = m[0].built + m[1].built;
+      s += tot ? Math.abs(m[0].built - m[1].built) / tot / 6 : 0;
+    }
+    return s;
+  };
+  const generalist = skew('none'), dedicated = skew('byBelt');
+  assert.ok(generalist > 0.2, `generalists should skew, got ${generalist.toFixed(3)}`);
+  assert.ok(dedicated < 0.05, `dedicated lines should even out, got ${dedicated.toFixed(3)}`);
 });
