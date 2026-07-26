@@ -1,84 +1,86 @@
 # Deploying to o2
 
-Goal: `https://ci4o2.zapto.org/life/` serves the checkout at `/home/ci4/src/life`
-directly, so publishing is `git pull` and nothing else — no copying files into the
-nginx web root.
+`https://ci4o2.zapto.org/life/` serves the checkout at `/home/ci4/src/life` directly, so
+publishing is `git pull` and nothing else — no copying files into the nginx web root.
 
-## One-time setup
+## The host
 
-Run these **on o2**, not here.
+o2 is **NetBSD-current** (11.99.6, evbarm64) with nginx 1.30.2 from pkgsrc. That decides
+every path below, and none of it looks like a Linux install:
 
-**1. Let nginx traverse into the checkout.** Home directories are usually `700`, which
-stops the nginx worker before it ever reaches the repo. Grant traverse (`x`) only — this
-does not make the directories listable:
+| | |
+|---|---|
+| nginx binary | `/usr/pkg/sbin/nginx` (not on the login `PATH`) |
+| config | `/usr/pkg/etc/nginx/nginx.conf` |
+| this snippet | `/usr/pkg/etc/nginx/life.conf` |
+| worker user | `nginx` |
+| service | `/etc/rc.d/nginx reload`, enabled by `nginx=YES` in `/etc/rc.conf` |
+| site root | `share/examples/nginx/html`, relative to the `--prefix`, so `/usr/pkg/share/examples/nginx/html` |
+| TLS | `/etc/ssl/acme/ci4o2.zapto.org.fullchain.pem`, ACME served over :80 from `/var/www/acme/` |
+
+No SELinux, no AppArmor — nothing to relabel.
+
+## Setup — already done
+
+**1. Permissions.** Nothing was needed. `/home`, `/home/ci4`, `/home/ci4/src` and the
+checkout are all `drwxr-xr-x`, so the `nginx` worker can already traverse and read. Confirm
+with:
 
 ```sh
-chmod o+x /home/ci4 /home/ci4/src
-find /home/ci4/src/life -type d -exec chmod o+rx {} +
-find /home/ci4/src/life -type f -exec chmod o+r {} +
+sudo -u nginx test -r /home/ci4/src/life/life-torus.html && echo readable
 ```
 
-**2. Wire up the location blocks.**
+**2. The snippet is installed as a host file**, copied from `deploy/nginx-life.conf`:
 
 ```sh
-sudo nginx -T | grep -n 'server_name ci4o2'      # find the right server block / file
+sudo install -o root -g wheel -m 644 nginx-life.conf /usr/pkg/etc/nginx/life.conf
 ```
 
-Then add one line inside that `server { ... }` block:
+Deliberately *not* `include`-ing the repo copy directly. nginx refuses to start if an
+`include` target is missing, so pointing it into a user's git checkout means moving or
+removing that checkout takes the whole web server down with it — including the unrelated
+sites. The repo copy is the reference; the host keeps its own.
+
+**3. Included** in the `:443` server block of `nginx.conf`, after `location / {}`:
 
 ```nginx
-include /home/ci4/src/life/deploy/nginx-life.conf;
+include /usr/pkg/etc/nginx/life.conf;
 ```
 
-**3. Reload.**
+Original saved alongside as `nginx.conf.bak-20260726`.
+
+**4. Applied:**
 
 ```sh
-sudo nginx -t && sudo systemctl reload nginx
+sudo /usr/pkg/sbin/nginx -t && sudo /etc/rc.d/nginx reload
 ```
 
-**4. SELinux — Oracle Linux / RHEL only.** OCI images ship it enforcing, and it will
-deny nginx access to anything under `/home` with a `permission denied` in the error log
-even when the file mode is right. Check and fix:
-
-```sh
-getenforce                                  # "Enforcing" means this step applies
-sudo setsebool -P httpd_read_user_content 1
-```
-
-If that is not enough, label the tree for the web server instead:
-
-```sh
-sudo semanage fcontext -a -t httpd_sys_content_t "/home/ci4/src/life(/.*)?"
-sudo restorecon -Rv /home/ci4/src/life
-```
-
-Debian/Ubuntu has no SELinux by default — skip this.
-
-## Publishing, from then on
+## Publishing, from now on
 
 ```sh
 ssh o2 'cd /home/ci4/src/life && git pull --ff-only'
 ```
 
-New simulations appear automatically once they are linked from `index.html`.
+New simulations appear as soon as they are linked from `index.html`. Nothing else to copy.
 
 ## Checks
 
-```sh
-curl -sI  https://ci4o2.zapto.org/life/            | head -1   # 200
-curl -sI  https://ci4o2.zapto.org/life/.git/config | head -1   # 404, not 200
-curl -s   https://ci4o2.zapto.org/life/ | grep -c 'class="card"'  # link count
+Verified live on 2026-07-26:
+
+```
+/life/life-torus.html   200      served straight out of the checkout
+/life/life-stats.js     200      Content-Encoding: gzip, Cache-Control: no-cache
+/life/.git/config       404      denied
+/life/target/           404      denied
+/life/docs/             404      denied
+/life-ecology.html      200      the old root-level copy still works
 ```
 
-The second one matters. A checkout served as a web root hands out `.git` unless something
-blocks it; `nginx-life.conf` does, and that command is how you confirm it.
+`/life/` itself answers **403** until the checkout actually contains `index.html`
+(`directory index ... is forbidden`, with `autoindex off`). That is the correct failure —
+it means the location is live and the content is merely behind. It turns 200 on the first
+pull that brings `index.html` in.
 
-## Notes
-
-- The old `/life-ecology.html` path at the site root still works if anything links to it —
-  this adds a location, it does not remove one.
-- The pages pull three.js from jsDelivr, so a client with no internet gets a blank canvas
-  on the torus simulations. `life-conveyor.html` is plain 2D canvas and has no CDN
-  dependency.
-- `Cache-Control: no-cache` means revalidate, not "never cache" — nginx still answers 304
-  from the ETag, so a repeat visit transfers almost nothing.
+The `.git` check is the one worth keeping. Serving a git checkout as a web root hands the
+full repository to anyone who asks; the deny block in `nginx-life.conf` stops it, and that
+curl is how you know it still does.
