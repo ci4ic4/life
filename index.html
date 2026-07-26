@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Life — browser simulations</title>
+<style>
+  /* tell Chrome the page is already dark, or auto-dark rewrites the whole palette */
+  :root { color-scheme: dark; }
+  :root { --bg:#0a0c10; --card:#151a22; --line:#2a3340; --edge:#36424f;
+          --fg:#cdd6e0; --mute:#8a96a6; --blue:#7fb0ff; --green:#7fd18c; --amber:#ffd479; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.55 system-ui,sans-serif; }
+  .wrap { max-width:860px; margin:0 auto; padding:44px 20px 64px; }
+  h1 { margin:0 0 6px; font-size:26px; font-weight:600; letter-spacing:-.2px; }
+  .lede { margin:0 0 4px; color:var(--mute); max-width:62ch; }
+  .lede b { color:var(--fg); font-weight:600; }
+  h2 { margin:38px 0 12px; font-size:11px; color:var(--amber);
+       letter-spacing:.6px; text-transform:uppercase; font-weight:600; }
+
+  .grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); }
+  a.card { display:block; padding:14px 16px; background:var(--card); color:inherit;
+           border:1px solid var(--line); border-radius:9px; text-decoration:none;
+           transition:border-color .12s, transform .12s; }
+  a.card:hover { border-color:var(--blue); transform:translateY(-1px); }
+  a.card:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+  .card .glyph { font-size:20px; line-height:1; }
+  .card h3 { margin:8px 0 3px; font-size:15px; font-weight:600; color:var(--fg); }
+  .card p { margin:0; color:var(--mute); font-size:12.5px; }
+  .card .tag { display:inline-block; margin-top:9px; font-size:10.5px; color:var(--green);
+               border:1px solid var(--edge); border-radius:4px; padding:1px 6px; }
+
+  .note { margin-top:34px; padding:14px 16px; background:var(--card);
+          border:1px solid var(--line); border-radius:9px; color:var(--mute); font-size:12.5px; }
+  .note p { margin:0 0 8px; }
+  .note p:last-child { margin:0; }
+  .note b, .note a { color:var(--fg); }
+  code { background:#0e1218; border:1px solid var(--line); border-radius:3px;
+         padding:1px 5px; font-size:12px; }
+  footer { margin-top:30px; color:#5a6a7a; font-size:12px; }
+  footer a { color:#7a8798; }
+</style>
+
+<div class="wrap">
+  <h1>Life</h1>
+  <p class="lede">Browser simulations, each a <b>single self-contained HTML file</b>. No build
+  step, no bundler, no server — open one and it runs. Most are Conway's Life variants rendered
+  on a 3D torus; the newest is not a cellular automaton at all.</p>
+
+  <h2>Cellular automata on a torus</h2>
+  <div class="grid">
+    <a class="card" href="life-torus.html">
+      <div class="glyph">◍</div>
+      <h3>Life on a Torus</h3>
+      <p>Deterministic Life with two clans, weighted-kernel rules and cycle detection.
+      The base the others build on.</p>
+      <span class="tag">GPU</span>
+    </a>
+
+    <a class="card" href="life-stochastic.html">
+      <div class="glyph">◐</div>
+      <h3>Stochastic Life</h3>
+      <p>Birth and survival become Gaussian probabilities around the usual counts. Includes a
+      headless search that classifies runs as dead, full, stable or chaotic.</p>
+      <span class="tag">GPU</span>
+    </a>
+
+    <a class="card" href="life-evolve.html">
+      <div class="glyph">✦</div>
+      <h3>Evolving Life</h3>
+      <p>Heritable per-cell genes under spatial selection — tolerance to rival clans and to a
+      static terrain field. Populations sort themselves by genotype.</p>
+      <span class="tag">GPU</span>
+    </a>
+  </div>
+
+  <h2>Agents, not cells</h2>
+  <div class="grid">
+    <a class="card" href="life-ecology.html">
+      <div class="glyph">🐿</div>
+      <h3>Squirrels &amp; Pine Martens</h3>
+      <p>Predator and prey on a torus of trees. Populations chase each other around the
+      classic cycle, or collapse.</p>
+      <span class="tag">seeded · save/load</span>
+    </a>
+
+    <a class="card" href="life-conveyor.html">
+      <div class="glyph">▤</div>
+      <h3>Conveyor Assembly</h3>
+      <p>Workers on either side of parallel belts assemble products from parts, competing for
+      each cell. Throughput, fairness and starvation.</p>
+      <span class="tag">seeded · save/load</span>
+    </a>
+  </div>
+
+  <div class="note">
+    <p><b>Reading them.</b> Every simulation has a <b>Help</b> button explaining the rules and
+    what is worth watching. The ones marked GPU fall back to CPU automatically on smaller grids;
+    each checks its GPU path against the CPU reference at startup.</p>
+    <p><b>Reproducibility.</b> The seeded simulations replay exactly from a seed plus settings,
+    and can copy that setup to the clipboard for sharing.</p>
+    <p><b>Under them.</b> The rules live in plain modules — <code>life-stats.js</code>,
+    <code>life-ecology-core.js</code>, <code>life-conveyor-core.js</code> — with no DOM, shared
+    between the pages and Node's test runner. <code>node --test</code> runs the suite.</p>
+  </div>
+
+  <footer>
+    Source: <a href="https://github.com/ci4ic4/life">github.com/ci4ic4/life</a>
+  </footer>
+</div>
