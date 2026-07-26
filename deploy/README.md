@@ -5,8 +5,10 @@ publishing is `git pull` and nothing else — no copying files into the nginx we
 
 ## The host
 
-o2 is **NetBSD-current** (11.99.6, evbarm64) with nginx 1.30.2 from pkgsrc. That decides
-every path below, and none of it looks like a Linux install:
+o2 runs **NetBSD-current** with nginx from pkgsrc. That decides every path below, and none
+of it looks like a Linux install. (Exact OS and nginx versions are deliberately left out —
+this file is public on GitHub, and a precise version plus architecture is the filter a
+vulnerability scanner wants. Run `uname -a` and `/usr/pkg/sbin/nginx -v` on the host.)
 
 | | |
 |---|---|
