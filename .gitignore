@@ -2,3 +2,7 @@
 node_modules/
 /target
 session_name
+session-name
+# Local editor/agent config: per-machine paths and personal tooling. nginx already
+# denies dotfiles, so this is about keeping the repo and origin clean, not the site.
+.claude/
