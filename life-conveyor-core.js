@@ -369,6 +369,31 @@
     return cfg.recipes.map(r => ({ product: r.out, built: st.stats.produced[r.out] }));
   }
 
+  /** Products built at each cell index, summed over belts and sides. */
+  function outputByCell(st, cfg) {
+    const per = new Array(cfg.numCells).fill(0);
+    for (const w of st.workers) per[w.cell] += w.made;
+    return per;
+  }
+
+  /**
+   * How many cells from the head account for `share` of all output. Output decays
+   * geometrically downstream because every worker is a sieve on the same supply, so
+   * this lands well short of numCells whenever the line is supply-starved — which is
+   * the normal case. The remaining cells are staffed but idle, not broken.
+   */
+  function usefulLength(st, cfg, share = 0.9) {
+    const per = outputByCell(st, cfg);
+    const total = per.reduce((a, b) => a + b, 0);
+    if (!total) return 0;
+    let run = 0;
+    for (let i = 0; i < per.length; i++) {
+      run += per[i];
+      if (run >= share * total) return i + 1;
+    }
+    return per.length;
+  }
+
   /** Headless run. Returns the scalars a parameter sweep wants, plus the final state. */
   function runTrial(cfg, seed, iterations) {
     const st = createState(cfg, seed);
@@ -378,6 +403,7 @@
       produced: Array.from(st.stats.produced),
       productMix: productMix(st, cfg),
       sideShare: sideShare(st, cfg),
+      usefulLength: usefulLength(st, cfg),
       conserved: conservation(st, cfg).every(r => r.delta === 0),
       state: st,
     };
@@ -391,6 +417,6 @@
     wants, startable, act, sideOrder,
     advance, processCells, step,
     onBelt, heldByWorkers, conservation, workerStatesValid,
-    efficiency, sideShare, productMix, runTrial,
+    efficiency, sideShare, productMix, outputByCell, usefulLength, runTrial,
   };
 });

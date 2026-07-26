@@ -49,7 +49,9 @@
     north <span class="k" id="nsh">—</span> / south <span class="k" id="ssh">—</span><br>
     Mix <span class="k" id="mix">—</span><br>
     Fed <span class="k" id="fed">—</span> ·
-    wasted <span class="k" id="waste">—</span>
+    wasted <span class="k" id="waste">—</span><br>
+    Useful length <span class="k" id="ulen">—</span>
+    <span id="ulnote" style="color:#7c8798"></span>
     <div id="warn"></div>
     <canvas id="chart" width="212" height="70"
       style="display:block; margin-top:8px; background:#0e1218; border:1px solid #2a3340; border-radius:5px"></canvas>
@@ -142,6 +144,28 @@
   <p>Up to ten belts run in parallel from one seeded stream. They do not interact, so output
   scales with belt count and <b>efficiency</b> — products per belt-movement — stays flat.
   That is the point of the number: it stays comparable when you add capacity.</p>
+
+  <h3>Why a longer belt does almost nothing</h3>
+  <p>Push <b>Cells per belt</b> up and the far workers look broken — nothing ever happens
+  there. They are not broken, they are <b>starved</b>. Every worker is a sieve on the same
+  supply, so what reaches cell <i>i</i> is what every worker upstream declined to take, and
+  output decays geometrically down the belt. The dashed marker and the <b>useful length</b>
+  readout show where 90% of production has already happened. Past it the line is staffed
+  and idle.</p>
+  <p>The random feed is uniform over {gap, A, B}, so parts arrive at ⅔ per tick and a
+  product eats two of them. <b>The whole factory is capped at ⅓ products per tick</b>
+  no matter how many cells or workers you add — and it already runs at about 96% of that.
+  Going from 10 cells to 40 buys under 1%.</p>
+  <p>Watch what the starved workers are doing: most of them are holding a single part and
+  waiting forever for the complement, which never survives the sieve upstream. They are a
+  sponge of dead work-in-progress. That is why a long belt reports <b>almost no waste</b> —
+  next to nothing rides off the end, because the idle workers absorbed it first. Near-zero
+  waste on a long belt is the bad reading, not the good one.</p>
+  <p>Assembly time does not cap the reach; it <i>extends</i> it. A worker mid-assembly
+  cannot pick anything up, so slow assembly makes the upstream sieve leakier and parts
+  travel further. The only thing that genuinely moves the frontier is a denser supply —
+  cut the gaps from one in three to one in ten and the useful length roughly doubles.
+  Cut them to zero and the line deadlocks; see below.</p>
 
   <h3>Several products</h3>
   <p><b>Product mix</b> swaps in a different set of parts and recipes. Products may use
@@ -316,6 +340,8 @@ function draw() {
   const gap = Math.max(3, ch * 0.16);
 
   ctx.textBaseline = 'alphabetic';
+  // where 90% of output has already been made — everything past it is staffed but starved
+  const ulen = K.usefulLength(st, cfg);
   for (let b = 0; b < nb; b++) {
     const belt = st.belts[b];
     const blockH = ch * rowsPerBelt + gap * (rowsPerBelt - 1);
@@ -345,6 +371,20 @@ function draw() {
       if (cfg.sides > 1)
         drawWorker(K.workerAt(st, cfg, K.SOUTH, i, b), x, beltY + ch + gap, cw, ch);
     }
+
+    if (ulen > 0 && ulen < n) {
+      const x = x0 + ulen * cw;
+      ctx.save();
+      ctx.strokeStyle = '#e0a04a'; ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(x, yTop - 4); ctx.lineTo(x, yTop + blockH + 4);
+      ctx.stroke();
+      ctx.restore();
+      if (b === 0) {
+        ctx.font = '10px system-ui'; ctx.fillStyle = '#e0a04a'; ctx.textAlign = 'left';
+        ctx.fillText('90% of output', x + 4, yTop - 8);
+      }
+    }
   }
 }
 
@@ -370,6 +410,12 @@ function updateStatus() {
   $('mix').textContent = mix.map(m => `${partChar(m.product)} ${m.built}`).join(' · ');
   $('fed').textContent = fed;
   $('waste').textContent = wasted + (fed ? ` (${(wasted / fed * 100).toFixed(0)}%)` : '');
+
+  // output decays geometrically downstream, so cells past this point are staffed but idle
+  const ulen = K.usefulLength(st, cfg);
+  $('ulen').textContent = ulen ? `${ulen} of ${cfg.numCells} cells` : '—';
+  $('ulnote').textContent = ulen && ulen < cfg.numCells
+    ? `— ${cfg.numCells - ulen} starved` : '';
 
   const notes = [];
   const bad = K.conservation(st, cfg).filter(r => r.delta !== 0);

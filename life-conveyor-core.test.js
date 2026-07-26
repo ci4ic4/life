@@ -429,3 +429,66 @@ test('specialisation balances the product mix that generalists skew', () => {
   assert.ok(generalist > 0.2, `generalists should skew, got ${generalist.toFixed(3)}`);
   assert.ok(dedicated < 0.05, `dedicated lines should even out, got ${dedicated.toFixed(3)}`);
 });
+
+// ---- useful belt length ------------------------------------------------------
+// Every worker is a sieve on one shared supply, so output decays geometrically
+// downstream. A long belt is mostly staffed-but-starved, and the readout says so.
+
+/** Mean useful length over several seeds; `over` is merged into a `simple` config. */
+const meanUseful = (over, time, seeds = 8, iters = 3000) => {
+  let s = 0;
+  for (let seed = 1; seed <= seeds; seed++) {
+    const cfg = C.configFrom('simple', over);
+    cfg.recipes[0].time = time;
+    s += C.runTrial(cfg, seed, iters).usefulLength;
+  }
+  return s / seeds;
+};
+
+test('usefulLength is 0 before anything is built and never exceeds the belt', () => {
+  const cfg = C.configFrom('simple', { numCells: 8 });
+  const st = C.createState(cfg, 1);
+  assert.equal(C.usefulLength(st, cfg), 0);
+  for (let i = 0; i < 500; i++) C.step(st, cfg);
+  const u = C.usefulLength(st, cfg);
+  assert.ok(u >= 1 && u <= cfg.numCells, `expected 1..8, got ${u}`);
+});
+
+test('a long belt is mostly starved — most cells sit past the useful length', () => {
+  const u = meanUseful({ numCells: 20 }, 3);
+  assert.ok(u <= 8, `20 cells should be far from all useful, got ${u.toFixed(1)}`);
+});
+
+test('longer assembly time extends the useful length, it does not cap it', () => {
+  // the intuitive reading is backwards: a busy worker cannot pick up, so slow assembly
+  // makes the upstream sieve leakier and parts survive further down the belt
+  const quick = meanUseful({ numCells: 20 }, 1);
+  const slow = meanUseful({ numCells: 20 }, 15);
+  assert.ok(slow > quick, `slow ${slow.toFixed(1)} should exceed quick ${quick.toFixed(1)}`);
+});
+
+// The starved tail is not merely idle, it hoards. A worker grabs the first part it sees
+// and then waits forever for a complement that never survives the sieve upstream, so a
+// long belt reports zero waste only because its idle workers absorbed everything.
+test('the starved tail locks parts up as dead work-in-progress', () => {
+  const cfg = C.configFrom('simple', { numCells: 20 });
+  const r = C.runTrial(cfg, 3, 3000);
+  const stuck = r.state.workers.filter(
+    w => !w.building && w.product === C.EMPTY && w.held.some(c => c > 0));
+  assert.ok(stuck.length > r.state.workers.length / 2,
+    `most workers should be holding a part they cannot pair, got ${stuck.length}`);
+  // a handful escape early, before the tail has filled up with hoarders
+  const fed = C.rawParts(cfg).reduce((a, p) => a + r.state.stats.placed[p], 0);
+  const wasted = C.rawParts(cfg).reduce((a, p) => a + r.state.stats.removed[p], 0);
+  assert.ok(wasted / fed < 0.01,
+    `almost nothing should reach the end, got ${wasted}/${fed}`);
+  assert.ok(r.conserved);
+});
+
+test('a denser supply is what actually pushes work downstream', () => {
+  // one gap in ten instead of the default one in three
+  const dense = { numCells: 20, supply: (rng) => (rng() < 0.1 ? C.EMPTY : (rng() < 0.5 ? 1 : 2)) };
+  const base = meanUseful({ numCells: 20 }, 3);
+  const fed = meanUseful(dense, 3);
+  assert.ok(fed > base, `dense ${fed.toFixed(1)} should exceed default ${base.toFixed(1)}`);
+});
