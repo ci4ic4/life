@@ -15,6 +15,7 @@ pub enum SimMode {
     Deterministic,
     Stochastic,
     Evolve,
+    Ecology,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -59,6 +60,15 @@ pub struct EvolveUi {
     pub terrain_sign: f32, // +1 fertile / -1 hostile
 }
 
+/// Ecology-only knobs. The rule's own parameters (β, σ, the energy ledger) arrive
+/// with the controls for them; this is only what seeding needs.
+#[derive(Clone)]
+pub struct EcologyUi {
+    /// Martens seeded per empty cell. The browser introduces them with a release
+    /// button instead, which is a later slice.
+    pub marten_frac: f64,
+}
+
 /// Everything the panel may edit, held in one place so `App` and `PanelEdits`
 /// cannot drift apart — the copy-back after a frame is a single assignment
 /// rather than one line per field.
@@ -74,6 +84,7 @@ pub struct Tunables {
     pub topo: Topology,
     pub stochastic: StochasticUi,
     pub evolve: EvolveUi,
+    pub ecology: EcologyUi,
 }
 
 impl Default for Tunables {
@@ -97,6 +108,7 @@ impl Default for Tunables {
                 pen_clan: 1,
                 terrain_sign: 1.0,
             },
+            ecology: EcologyUi { marten_frac: 0.02 },
         }
     }
 }
@@ -111,6 +123,7 @@ pub struct PanelView {
     pub color_mode: u32,
     pub evolve_stats: String,
     pub tau_history: VecDeque<(f32, f32)>,
+    pub ecology_counts: String,
 }
 
 /// One frame of user intent. `t` is the edited state; the rest are one-shot
@@ -164,6 +177,7 @@ pub fn draw(ctx: &egui::Context, view: &PanelView, edits: &mut PanelEdits) {
             ui.selectable_value(&mut edits.t.sim_mode, SimMode::Deterministic, "Torus");
             ui.selectable_value(&mut edits.t.sim_mode, SimMode::Stochastic, "Stochastic");
             ui.selectable_value(&mut edits.t.sim_mode, SimMode::Evolve, "Evolve");
+            ui.selectable_value(&mut edits.t.sim_mode, SimMode::Ecology, "Ecology");
         });
         ui.horizontal(|ui| {
             ui.selectable_value(&mut edits.t.tool, Tool::Orbit, "🔄 Orbit");
@@ -326,6 +340,16 @@ pub fn draw(ctx: &egui::Context, view: &PanelView, edits: &mut PanelEdits) {
                     p.add(egui::Shape::line(pts, egui::Stroke::new(1.5, col)));
                 }
             }
+        } else if edits.t.sim_mode == SimMode::Ecology {
+            ui.separator();
+            ui.add(egui::Slider::new(&mut edits.t.density, 0.0..=1.0).text("squirrel density"));
+            ui.add(egui::Slider::new(&mut edits.t.ecology.marten_frac, 0.0..=0.2).text("marten seed"));
+            if ui.button("Reseed").clicked() {
+                edits.reset = true;
+            }
+            let label = ["◧ Species", "◧ Marten energy"][view.color_mode.min(1) as usize];
+            if ui.button(label).clicked() { edits.cycle_color = true; }
+            if !view.ecology_counts.is_empty() { ui.label(&view.ecology_counts); }
         } else {
             ui.add(egui::Slider::new(&mut edits.t.density, 0.0..=1.0).text("density"));
             if ui.button("Reseed").clicked() {

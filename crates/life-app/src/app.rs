@@ -7,7 +7,8 @@ use life_core::{
     curve, generate_terrain, parse_bs, parse_evolve_rule, run_trial, CurveParams, CycleDetector,
     EvolveParams, EvolveState, Grid, Kernel, Thresholds, TrialOpts, Verdict, BS,
 };
-use life_gpu::{gpu_self_test, EvolveSim, GpuContext, Sim, SimRule};
+use life_core::ecology::EcologyParams;
+use life_gpu::{gpu_self_test, EcologySim, EvolveSim, GpuContext, Sim, SimRule};
 use life_render::{pick_cell, OrbitCamera, RenderSource, Renderer, ViewMode};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -18,6 +19,8 @@ use winit::window::{Window, WindowId};
 enum SimKind {
     Binary(Sim),
     Evolve(EvolveSim),
+    /// Stepped on the CPU; see `life_gpu::ecology_sim` for why it cannot be otherwise.
+    Ecology(EcologySim),
 }
 
 pub struct App {
@@ -47,6 +50,10 @@ pub struct App {
     evolve_stats: String,
     gens_since_stats: u32,
     tau_history: VecDeque<(f32, f32)>, // (warm τ̄, cool τ̄), newest at back
+    // ecology mode. The rule's own parameters have no controls yet, so they stay
+    // at their defaults; the sliders for them are the next slice.
+    ecology_params: EcologyParams,
+    ecology_counts: String,
     next_seed: SeedKind,
     // input
     dragging: bool,
@@ -89,6 +96,8 @@ impl Default for App {
             evolve_stats: String::new(),
             gens_since_stats: 0,
             tau_history: VecDeque::new(),
+            ecology_params: EcologyParams::default(),
+            ecology_counts: String::new(),
             next_seed: SeedKind::Soup,
             dragging: false,
             painting: false,
@@ -223,6 +232,29 @@ impl App {
                 self.gens_since_stats = 0;
                 self.tau_history.clear();
             }
+            SimMode::Ecology => {
+                self.seed_counter = self.seed_counter.wrapping_add(1);
+                let gpu = self.gpu.as_ref().unwrap();
+                let esim = EcologySim::new(
+                    gpu,
+                    self.t.grid_w,
+                    self.t.grid_h,
+                    self.t.density as f64,
+                    self.t.ecology.marten_frac,
+                    self.ecology_params.clone(),
+                    self.t.topo,
+                    self.seed_counter.wrapping_mul(0x9E3779B9),
+                );
+                let renderer = Renderer::new(
+                    &gpu.device, gpu.config.format,
+                    RenderSource::Ecology(esim.front_view()),
+                    gpu_size,
+                );
+                renderer.set_color_mode(&gpu.queue, self.color_mode.min(1));
+                self.sim = Some(SimKind::Ecology(esim));
+                self.renderer = Some(renderer);
+                self.ecology_counts.clear();
+            }
             _ => {
                 let rule = self.build_rule();
                 let grid = self.seed_grid();
@@ -311,6 +343,13 @@ impl App {
                         if self.tau_history.len() > 120 { self.tau_history.pop_front(); }
                     }
                 }
+                SimKind::Ecology(esim) => {
+                    // The step is CPU-side and uploads its own texture, so the bind
+                    // group still points at the right view — no set_source needed.
+                    esim.step(gpu);
+                    let (red, grey, marten) = esim.counts();
+                    self.ecology_counts = format!("red {red} · grey {grey} · marten {marten}");
+                }
             }
         }
     }
@@ -348,6 +387,7 @@ impl App {
             color_mode: self.color_mode,
             evolve_stats: self.evolve_stats.clone(),
             tau_history: self.tau_history.clone(),
+            ecology_counts: self.ecology_counts.clone(),
         };
         let size = (gpu.config.width, gpu.config.height);
         self.egui.as_mut().unwrap().run(
@@ -454,9 +494,12 @@ impl App {
         let Some((cx, cy)) = pick_cell(&self.cam, aspect, ndc, self.mode, dims) else { return };
         match self.t.tool {
             Tool::Orbit => {}
-            Tool::Pen => match self.sim.as_ref() {
+            Tool::Pen => match self.sim.as_mut() {
                 Some(SimKind::Binary(sim)) => sim.write_cell(gpu, cx, cy, 1),
                 Some(SimKind::Evolve(esim)) => esim.write_cell(gpu, cx, cy, self.t.evolve.pen_clan, self.t.evolve.seed_tau, 0.5),
+                // ecology has three species to choose from and no picker yet, so the
+                // pen drops a red squirrel; the species selector is the next slice
+                Some(SimKind::Ecology(esim)) => esim.write_cell(gpu, cx, cy, 1),
                 None => {}
             },
             Tool::Glider => {
@@ -464,9 +507,11 @@ impl App {
                 const GLIDER: [(u32, u32); 5] = [(1, 0), (2, 1), (0, 2), (1, 2), (2, 2)];
                 for (dc, dr) in GLIDER {
                     let (x, y) = ((cx + dc) % dims.0, (cy + dr) % dims.1);
-                    match self.sim.as_ref() {
+                    match self.sim.as_mut() {
                         Some(SimKind::Binary(sim)) => sim.write_cell(gpu, x, y, 1),
                         Some(SimKind::Evolve(esim)) => esim.write_cell(gpu, x, y, self.t.evolve.pen_clan, self.t.evolve.seed_tau, 0.5),
+                        // a glider is a Life pattern; it means nothing to a contact process
+                        Some(SimKind::Ecology(_)) => {}
                         None => {}
                     }
                 }

@@ -10,11 +10,16 @@ use wgpu::util::DeviceExt;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ViewMode { Torus, Flat }
 
-/// What the surface paints: a binary sim's uint texture, or an evolve sim's
-/// float state + env pair (with runtime-switchable colour modes).
+/// What the surface paints: a binary sim's uint texture, an evolve sim's float
+/// state + env pair, or an ecology sim's single packed float texture (all with
+/// runtime-switchable colour modes bar the binary one).
+///
+/// Note this is an enum over *texture views*, not over simulation types — which
+/// is why a CPU-stepped simulation can feed it without the renderer changing.
 pub enum RenderSource<'a> {
     Binary(&'a wgpu::TextureView),
     Evolve { state: &'a wgpu::TextureView, env: &'a wgpu::TextureView },
+    Ecology(&'a wgpu::TextureView),
 }
 
 pub struct Renderer {
@@ -61,6 +66,10 @@ impl Renderer {
             RenderSource::Evolve { .. } => (
                 include_str!("draw_evolve.wgsl"),
                 vec![uniform_entry, float_tex(1), float_tex(2)],
+            ),
+            RenderSource::Ecology(_) => (
+                include_str!("draw_ecology.wgsl"),
+                vec![uniform_entry, float_tex(1)],
             ),
         };
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -184,6 +193,9 @@ fn make_bind(device: &wgpu::Device, bgl: &wgpu::BindGroupLayout, vp_buf: &wgpu::
         RenderSource::Evolve { state, env } => {
             entries.push(wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(state) });
             entries.push(wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(env) });
+        }
+        RenderSource::Ecology(state) => {
+            entries.push(wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(state) });
         }
     }
     device.create_bind_group(&wgpu::BindGroupDescriptor {
