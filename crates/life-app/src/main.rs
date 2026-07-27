@@ -1,4 +1,5 @@
 mod app;
+mod panel;
 
 use winit::event_loop::{ControlFlow, EventLoop};
 
