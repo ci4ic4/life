@@ -38,6 +38,11 @@ pub fn resolve(mut x: i32, mut y: i32, w: u32, h: u32, t: Topology) -> Option<(u
     Some((x as u32, y as u32))
 }
 
+/// [`resolve`] as a flat index, for neighbour scans that never need the pair.
+pub fn resolve_idx(x: i32, y: i32, w: u32, h: u32, t: Topology) -> Option<usize> {
+    resolve(x, y, w, h, t).map(|(cx, cy)| cy as usize * w as usize + cx as usize)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
