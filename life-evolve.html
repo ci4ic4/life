@@ -171,6 +171,16 @@
   clans pressed against each other in dense fronts — so tolerance has somewhere to evolve.
   Foe weight there is large, making the selection pressure (and the brightening borders)
   much stronger than under Moore.</p>
+  <pre style="margin:6px 0;padding:8px 10px;background:#0e1218;border:1px solid #2a3340;
+border-radius:4px;color:#8a96a6;font:12px/1.5 ui-monospace,monospace">1 1 2 1 1
+1 2 3 2 1
+2 3 <b style="color:#ffd479">·</b> 3 2     centre excluded, weights sum to <b style="color:#cdd6e0">40</b>
+1 2 3 2 1
+1 1 2 1 1</pre>
+  <p>Worth reading these before the rule box: support is a weighted total on <b>0–40</b>, not a
+  neighbour count on 0–8, which is why the rule is written <b>Bx-y/Sp-q</b> rather than as digit
+  sets. An orthogonal neighbour is worth 3, a diagonal 2, the outer ring 2 or 1 — so a cell two
+  steps away still counts, at a third of the weight.</p>
 
   <h3>Environment (the terrain)</h3>
   <p>A static <b>landscape</b> underlies the grid: each cell is <b>fertile</b> (green) or
