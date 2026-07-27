@@ -10,7 +10,7 @@ Three families, and the distinction matters when you pick a pattern to copy:
 
 1. **Cellular automata on a torus** — `life-torus`, `life-stochastic`, `life-evolve`. Conway variants, Three.js + WebGL, GPU-accelerated.
 2. **Agent simulations** — `life-ecology` (predator/prey), `life-conveyor` (factory assembly). Not CA. No B/S rules, no torus mesh in the conveyor's case.
-3. **A partial Rust rewrite** in `crates/` — covers family 1 only.
+3. **A partial Rust rewrite** in `crates/` — all of family 1, plus `life-ecology` from family 2. `life-conveyor` has no port.
 
 The HTML files are siblings, not a component tree. They share *concepts* and deliberately copy code rather than importing it.
 
@@ -37,6 +37,8 @@ cargo test -p life-core
 
 **Gotcha: CI runs Rust only.** `.github/workflows/ci.yml` runs `cargo build --workspace` and `cargo test -p life-core` on three OSes — there is **no Node step**, so all 103 JS tests are manual. Run `node --test` yourself before committing anything touching a `*-core.js`; nothing else will.
 
+The one exception is `life-ecology-core.js`: change its mechanics and `cargo test -p life-core` fails, because `tests/ecology_parity.rs` holds counts generated from it. That failure is correct — it means the Rust port needs the same change and its expected rows regenerating, not that the test is stale.
+
 No `package.json`, no lint config. `node --test` auto-discovers `*.test.js`.
 
 ## Files
@@ -48,7 +50,7 @@ No `package.json`, no lint config. `node --test` auto-discovers `*.test.js`.
 - `life-ecology.html` + `-core.js` — squirrels and pine martens on a torus of trees. Contact-process prey growth + conserved WaTor-style predation. CPU only.
 - `life-conveyor.html` + `-core.js` — workers assembling products from parts on parallel belts. Ported from a Python interview assignment (`~/source/cl01`). 2D canvas, no Three.js, no CDN dependency.
 - `life-gpu.js` — browser-only `LifeGPU.create(renderer, cfg)`: shared WebGL2 harness (ping-pong compute + colour pass into a render target, on-demand readback). Each sim supplies its own rule/colour fragment shaders and CPU↔texture packing callbacks. **Used by the three CA sims only** — ecology and conveyor are CPU. Each has a boot-time `gpuSelfTest()` asserting the GPU step matches the CPU reference exactly (evolve/torus directly; stochastic at the deterministic limit σ→0). GPU caps grids at 2048², CPU fallback at 300². `life-torus` reads back every generation because loop detection needs the exact state; the other two throttle.
-- `crates/` — the Rust workspace: `life-core` (pure math, dependency-free, RNG injected as a closure so it stays wasm-ready), `life-gpu` (wgpu compute), `life-render` (torus mesh, camera, picking), `life-app` (winit + egui).
+- `crates/` — the Rust workspace: `life-core` (pure math, dependency-free, RNG injected as a closure so it stays wasm-ready), `life-gpu` (wgpu compute), `life-render` (torus mesh, camera, picking), `life-app` (winit + egui). `life-core::ecology` is a port of `life-ecology-core.js`, which stays the reference; `tests/ecology_parity.rs` replays a seeded run against counts generated from the JS and is what keeps the two from drifting.
 - `deploy/` — nginx config and notes for the o2 host. Not served.
 
 ## Cross-cutting invariants
@@ -56,6 +58,8 @@ No `package.json`, no lint config. `node --test` auto-discovers `*.test.js`.
 **Never remove `:root { color-scheme: dark }`** from any page. Without it Chrome's auto-dark heuristic decides these already-dark pages need darkening and rewrites the entire palette — headings and card backgrounds come out wrong. Invisible when testing locally in a light-mode-off browser; very visible to whoever you share the URL with.
 
 **Seeded runs must stay reproducible.** `mulberry32` is consumed as one sequential stream in scan order — that is exactly what makes a seed replay identically, and exactly what blocks a GPU port of `life-ecology` (parallel cells cannot agree on stream position). Any port has to move to a hash RNG keyed on position, which changes results; do not treat that as a refactor.
+
+**A port matching JS has to match its float widths too.** The JS typed arrays are the storage (`Uint8Array` for grids and flags, `Float32Array` for continuous per-cell state), but every parameter is a plain JS number, so the arithmetic is f64 and rounds to f32 exactly once, on store. Computing in f32 throughout is the natural-looking Rust translation and it is wrong: the error accumulates until some threshold comparison flips, and the boards diverge tens of generations later, long after any short test would notice. `life-core::ecology` is the worked example.
 
 **Three.js and OrbitControls come from the jsDelivr CDN.** The torus sims need network access to render at all. `life-conveyor` deliberately does not.
 
