@@ -11,6 +11,25 @@ use crate::context::GpuContext;
 use life_core::ecology::{step_ecology, EcologyParams, EcologyState};
 use life_core::Topology;
 
+/// Grid ceiling for this mode, far below the GPU modes' 2048 per axis because the
+/// step is CPU-bound. Measured cost of one `step_ecology`:
+///
+/// ```text
+///              release      debug
+///   128x128    759 gen/s    133 gen/s
+///   256x256    176           32
+///   512x256     97           17
+///   512x512     46            8
+///  1024x512     24            4
+/// ```
+///
+/// The app's target rate runs 0.5–120 gen/s and defaults to 12. 512 per axis is the
+/// largest power of two that still clears that default in a release build at its
+/// worst case (512x512, 46 gen/s), and it is already 80x the browser's 80x40. A
+/// debug build is roughly 5.7x slower; the step accumulator absorbs that by falling
+/// behind the requested rate rather than spiralling into a catch-up burst.
+pub const MAX_AXIS: u32 = 512;
+
 pub struct EcologySim {
     state: EcologyState,
     params: EcologyParams,

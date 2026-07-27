@@ -8,6 +8,16 @@
 
 use std::collections::VecDeque;
 use life_core::{Topology, Wrap};
+use life_gpu::ecology_sim::MAX_AXIS as ECOLOGY_MAX_AXIS;
+
+/// Largest grid axis this mode allows. The GPU modes are bounded by texture size;
+/// ecology is bounded by how fast a CPU can step it.
+pub fn max_axis(mode: SimMode) -> u32 {
+    match mode {
+        SimMode::Ecology => ECOLOGY_MAX_AXIS,
+        _ => 2048,
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum SimMode {
@@ -60,13 +70,30 @@ pub struct EvolveUi {
     pub terrain_sign: f32, // +1 fertile / -1 hostile
 }
 
-/// Ecology-only knobs. The rule's own parameters (β, σ, the energy ledger) arrive
-/// with the controls for them; this is only what seeding needs.
+/// Ecology knobs: what seeds a board, and the rule's own parameters.
+///
+/// These are f64 to match `EcologyParams`, which is f64 because the reference
+/// implementation is JS — see the float-width invariant in CLAUDE.md.
 #[derive(Clone)]
 pub struct EcologyUi {
     /// Martens seeded per empty cell. The browser introduces them with a release
-    /// button instead, which is a later slice.
+    /// button instead; that is not ported yet, and with none seeded there is no
+    /// predation to watch.
     pub marten_frac: f64,
+    /// Fixed so a run is reproducible from the panel, as the browser's boardSeed is.
+    pub seed: u32,
+    // prey: contact-process colonisation and survival
+    pub beta_red: f64,
+    pub beta_grey: f64,
+    pub sigma: f64,
+    // marten: the energy ledger
+    pub delta: f64,      // drain per tick
+    pub g: f64,          // gain per meal
+    pub e0: f64,         // energy a newborn starts with
+    pub e_breed: f64,    // threshold to breed
+    pub breed_cost: f64, // paid on breeding
+    pub e_cap: f64,      // sated; stops hunting above this
+    pub mu: f64,         // breeding spill into an empty neighbour
 }
 
 /// Everything the panel may edit, held in one place so `App` and `PanelEdits`
@@ -108,7 +135,21 @@ impl Default for Tunables {
                 pen_clan: 1,
                 terrain_sign: 1.0,
             },
-            ecology: EcologyUi { marten_frac: 0.02 },
+            // rule defaults match EcologyParams::default(), which matches the browser
+            ecology: EcologyUi {
+                marten_frac: 0.02,
+                seed: 12345,
+                beta_red: 0.10,
+                beta_grey: 0.14,
+                sigma: 0.92,
+                delta: 1.0,
+                g: 3.0,
+                e0: 5.0,
+                e_breed: 10.0,
+                breed_cost: 5.0,
+                e_cap: 15.0,
+                mu: 0.5,
+            },
         }
     }
 }
@@ -226,10 +267,13 @@ pub fn draw(ctx: &egui::Context, view: &PanelView, edits: &mut PanelEdits) {
         ui.add(egui::Slider::new(&mut edits.t.target_gps, 0.5..=120.0).logarithmic(true).text("gens/s"));
         ui.horizontal(|ui| {
             ui.label("Size");
+            // ecology is CPU-stepped and cannot go as large, so offer the sizes it
+            // can actually run rather than accepting one and silently clamping it
+            let cap = max_axis(edits.t.sim_mode);
             egui::ComboBox::from_id_salt("grid_dim")
                 .selected_text(format!("{}×{}", edits.t.grid_w, edits.t.grid_h))
                 .show_ui(ui, |ui| {
-                    for &n in &[64u32, 128, 256, 512, 1024, 2048] {
+                    for &n in [64u32, 128, 256, 512, 1024, 2048].iter().filter(|&&n| n <= cap) {
                         let sel = edits.t.grid_w == n && edits.t.grid_h == n;
                         if ui.selectable_label(sel, format!("{n}×{n}")).clicked() {
                             edits.t.grid_w = n;
@@ -239,7 +283,7 @@ pub fn draw(ctx: &egui::Context, view: &PanelView, edits: &mut PanelEdits) {
                     }
                 });
             for v in [&mut edits.t.grid_w, &mut edits.t.grid_h] {
-                let r = ui.add(egui::DragValue::new(v).range(16..=2048).speed(8));
+                let r = ui.add(egui::DragValue::new(v).range(16..=cap).speed(8));
                 if r.drag_stopped() || r.lost_focus() {
                     edits.grid_dim_changed = true;
                 }
@@ -341,12 +385,39 @@ pub fn draw(ctx: &egui::Context, view: &PanelView, edits: &mut PanelEdits) {
                 }
             }
         } else if edits.t.sim_mode == SimMode::Ecology {
+            let e = &mut edits.t.ecology;
             ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("seed");
+                if ui.add(egui::DragValue::new(&mut e.seed).speed(1.0)).changed() {
+                    // a seed is only meaningful from the start of a run
+                    edits.reset = true;
+                }
+                if ui.button("Reseed").clicked() { edits.reset = true; }
+            });
             ui.add(egui::Slider::new(&mut edits.t.density, 0.0..=1.0).text("squirrel density"));
-            ui.add(egui::Slider::new(&mut edits.t.ecology.marten_frac, 0.0..=0.2).text("marten seed"));
-            if ui.button("Reseed").clicked() {
-                edits.reset = true;
-            }
+            ui.add(egui::Slider::new(&mut e.marten_frac, 0.0..=0.2).text("marten seed"));
+
+            ui.separator();
+            ui.label("prey");
+            // these are live: the rule reads params afresh every step, so changing
+            // one mid-run is a legitimate experiment rather than a reason to reseed
+            let mut live = false;
+            live |= ui.add(egui::Slider::new(&mut e.beta_red, 0.0..=1.0).text("β red")).drag_stopped();
+            live |= ui.add(egui::Slider::new(&mut e.beta_grey, 0.0..=1.0).text("β grey")).drag_stopped();
+            live |= ui.add(egui::Slider::new(&mut e.sigma, 0.0..=1.0).text("σ survival")).drag_stopped();
+
+            ui.label("marten energy");
+            live |= ui.add(egui::Slider::new(&mut e.delta, 0.0..=4.0).text("δ drain")).drag_stopped();
+            live |= ui.add(egui::Slider::new(&mut e.g, 0.0..=10.0).text("g per meal")).drag_stopped();
+            live |= ui.add(egui::Slider::new(&mut e.e0, 0.0..=20.0).text("E₀ newborn")).drag_stopped();
+            live |= ui.add(egui::Slider::new(&mut e.e_breed, 0.0..=30.0).text("E breed")).drag_stopped();
+            live |= ui.add(egui::Slider::new(&mut e.breed_cost, 0.0..=20.0).text("breed cost")).drag_stopped();
+            live |= ui.add(egui::Slider::new(&mut e.e_cap, 1.0..=40.0).text("E cap")).drag_stopped();
+            live |= ui.add(egui::Slider::new(&mut e.mu, 0.0..=1.0).text("μ spill")).drag_stopped();
+            edits.params_changed |= live;
+
+            ui.separator();
             let label = ["◧ Species", "◧ Marten energy"][view.color_mode.min(1) as usize];
             if ui.button(label).clicked() { edits.cycle_color = true; }
             if !view.ecology_counts.is_empty() { ui.label(&view.ecology_counts); }

@@ -50,9 +50,6 @@ pub struct App {
     evolve_stats: String,
     gens_since_stats: u32,
     tau_history: VecDeque<(f32, f32)>, // (warm τ̄, cool τ̄), newest at back
-    // ecology mode. The rule's own parameters have no controls yet, so they stay
-    // at their defaults; the sliders for them are the next slice.
-    ecology_params: EcologyParams,
     ecology_counts: String,
     next_seed: SeedKind,
     // input
@@ -96,7 +93,6 @@ impl Default for App {
             evolve_stats: String::new(),
             gens_since_stats: 0,
             tau_history: VecDeque::new(),
-            ecology_params: EcologyParams::default(),
             ecology_counts: String::new(),
             next_seed: SeedKind::Soup,
             dragging: false,
@@ -154,6 +150,26 @@ impl App {
             *c = (xorshift(&mut s) < self.t.density as f64) as u8;
         }
         g
+    }
+
+    /// The rule's parameters, rebuilt from the panel each time they are needed.
+    /// `gen` is owned by the sim, which advances it, so it is left at its default
+    /// here and preserved by `EcologySim::set_params`.
+    fn ecology_params(&self) -> EcologyParams {
+        let e = &self.t.ecology;
+        EcologyParams {
+            beta_red: e.beta_red,
+            beta_grey: e.beta_grey,
+            sigma: e.sigma,
+            delta: e.delta,
+            g: e.g,
+            e0: e.e0,
+            e_breed: e.e_breed,
+            breed_cost: e.breed_cost,
+            e_cap: e.e_cap,
+            mu: e.mu,
+            ..EcologyParams::default()
+        }
     }
 
     fn kernel(&self) -> Kernel {
@@ -233,7 +249,8 @@ impl App {
                 self.tau_history.clear();
             }
             SimMode::Ecology => {
-                self.seed_counter = self.seed_counter.wrapping_add(1);
+                // no seed_counter bump: the panel's seed is the whole point, so a
+                // rebuild with the same seed must reproduce the same run exactly
                 let gpu = self.gpu.as_ref().unwrap();
                 let esim = EcologySim::new(
                     gpu,
@@ -241,9 +258,9 @@ impl App {
                     self.t.grid_h,
                     self.t.density as f64,
                     self.t.ecology.marten_frac,
-                    self.ecology_params.clone(),
+                    self.ecology_params(),
                     self.t.topo,
-                    self.seed_counter.wrapping_mul(0x9E3779B9),
+                    self.t.ecology.seed,
                 );
                 let renderer = Renderer::new(
                     &gpu.device, gpu.config.format,
@@ -440,8 +457,9 @@ impl App {
             }
         }
         // hard cap regardless of how the value arrived: GPU textures max 2048/axis
-        self.t.grid_w = self.t.grid_w.clamp(16, 2048);
-        self.t.grid_h = self.t.grid_h.clamp(16, 2048);
+        let max_axis = panel::max_axis(self.t.sim_mode);
+        self.t.grid_w = self.t.grid_w.clamp(16, max_axis);
+        self.t.grid_h = self.t.grid_h.clamp(16, max_axis);
         if edits.grid_dim_changed {
             self.env = Vec::new(); // force realloc at new size in rebuild_sim
             self.rebuild_sim();
@@ -464,15 +482,23 @@ impl App {
                 self.rebuild_sim();
             }
         } else if edits.evolve_rule_changed || edits.kernel_changed || edits.reset || mode_changed
-            || (edits.params_changed && self.t.sim_mode != SimMode::Evolve)
+            || (edits.params_changed
+                && !matches!(self.t.sim_mode, SimMode::Evolve | SimMode::Ecology))
         {
             self.rebuild_sim();
         } else if edits.params_changed {
-            // evolve env_weight / σ_mut are live-tunable without reseeding
-            if let Some(SimKind::Evolve(esim)) = self.sim.as_mut() {
-                if let Some(p) = evolve_params_of(&self.t.evolve.rule_text, self.t.evolve.kernel_weighted, self.t.evolve.env_weight, self.t.evolve.mut_sigma) {
-                    esim.set_params(p);
+            // evolve env_weight / σ_mut are live-tunable without reseeding, and so is
+            // every ecology parameter: the rule reads them afresh each step, so a
+            // slider moved mid-run changes the ecology rather than restarting it
+            let ecology = self.ecology_params();
+            match self.sim.as_mut() {
+                Some(SimKind::Evolve(esim)) => {
+                    if let Some(p) = evolve_params_of(&self.t.evolve.rule_text, self.t.evolve.kernel_weighted, self.t.evolve.env_weight, self.t.evolve.mut_sigma) {
+                        esim.set_params(p);
+                    }
                 }
+                Some(SimKind::Ecology(esim)) => esim.set_params(ecology),
+                _ => {}
             }
         }
         if edits.start_search {
