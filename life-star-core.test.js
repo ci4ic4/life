@@ -276,3 +276,103 @@ test('structure: determinism — identical input gives identical output', () => 
   assert.strictEqual(a.tC, b.tC);
   assert.strictEqual(a.L, b.L);
 });
+
+test('createStar builds a star with the requested mass and shell count', () => {
+  const s = LS.createStar(1, { shells: 50 });
+  assert.ok(Math.abs(s.M - LS.M_SUN) / LS.M_SUN < 1e-9);
+  assert.strictEqual(s.comp.length, 50);
+  assert.ok(Math.abs(s.comp[0].H1 - 0.70) < 0.05, 'should start hydrogen-rich');
+  assert.strictEqual(s.age, 0);
+});
+
+test('step advances age by a positive, finite amount', () => {
+  const s = LS.createStar(1, { shells: 50 });
+  LS.step(s);
+  assert.ok(Number.isFinite(s.dt) && s.dt > 0, `dt was ${s.dt}`);
+  assert.ok(s.age > 0);
+});
+
+test('step burns hydrogen fastest in the centre, producing a gradient', () => {
+  const s = LS.createStar(1, { shells: 50 });
+  for (let i = 0; i < 200; i++) LS.step(s);
+  assert.ok(s.comp[0].H1 < s.comp[49].H1,
+    'the core should be more depleted than the surface');
+});
+
+test('step never drives a mass fraction negative or above one', () => {
+  const s = LS.createStar(25, { shells: 50 });
+  for (let i = 0; i < 500; i++) LS.step(s);
+  for (const shell of s.comp) {
+    for (const k in shell) {
+      assert.ok(shell[k] >= -1e-12 && shell[k] <= 1 + 1e-12,
+        `${k} out of range: ${shell[k]}`);
+    }
+  }
+});
+
+test('dt is capped by the fastest-burning shell, not a global average', () => {
+  const s = LS.createStar(25, { shells: 50 });
+  LS.step(s);
+  // A 25 solar mass star lives ~7 Myr. No single step may exceed a
+  // meaningful fraction of that.
+  assert.ok(s.dt / LS.YEAR < 1e6, `dt was ${s.dt / LS.YEAR} yr, far too coarse`);
+});
+
+// The headline calibration checks. Both brackets are a factor of ~2, which
+// is the honest accuracy of this model.
+test('a 1 solar mass star lives roughly 10 Gyr on the main sequence', () => {
+  const s = LS.createStar(1, { shells: 100 });
+  let guard = 0;
+  while (s.comp[0].H1 > 0.01 && guard++ < 200000) LS.step(s);
+  const gyr = s.age / LS.YEAR / 1e9;
+  assert.ok(gyr > 4 && gyr < 25, `main-sequence lifetime was ${gyr} Gyr`);
+});
+
+test('a 25 solar mass star lives far shorter than a 1 solar mass star', () => {
+  const big = LS.createStar(25, { shells: 100 });
+  const small = LS.createStar(1, { shells: 100 });
+  let guard = 0;
+  while (big.comp[0].H1 > 0.01 && guard++ < 200000) LS.step(big);
+  guard = 0;
+  while (small.comp[0].H1 > 0.01 && guard++ < 200000) LS.step(small);
+  const ratio = small.age / big.age;
+  assert.ok(ratio > 100, `lifetime ratio was only ${ratio}`);
+});
+
+test('evolution is deterministic', () => {
+  const a = LS.createStar(2, { shells: 50 });
+  const b = LS.createStar(2, { shells: 50 });
+  for (let i = 0; i < 100; i++) { LS.step(a); LS.step(b); }
+  assert.strictEqual(a.age, b.age);
+  assert.strictEqual(a.comp[0].H1, b.comp[0].H1);
+  assert.strictEqual(a.struct.L, b.struct.L);
+});
+
+// Task 5 defect fix: the brief's step() never set alive = false, so a
+// finished star's structure() would silently bisect to a meaningless
+// small-radius endpoint every step forever. Once phase is POST_H, step
+// must freeze struct and become a no-op.
+test('stepping a dead star is a no-op: age, comp and struct are unchanged', () => {
+  const s = LS.createStar(1, { shells: 20 });
+  s.alive = false;
+  s.phase = LS.PHASES.POST_H;
+  const ageBefore = s.age;
+  const compBefore = JSON.stringify(s.comp);
+  const structBefore = s.struct;
+  LS.step(s);
+  assert.strictEqual(s.age, ageBefore);
+  assert.strictEqual(JSON.stringify(s.comp), compBefore);
+  assert.strictEqual(s.struct, structBefore);
+  assert.strictEqual(s.dt, 0);
+});
+
+test('a 1 solar mass star eventually goes dead with a finite, sensible struct', () => {
+  const s = LS.createStar(1, { shells: 50 });
+  let guard = 0;
+  while (s.alive && guard++ < 200000) LS.step(s);
+  assert.strictEqual(s.alive, false);
+  assert.strictEqual(s.phase, LS.PHASES.POST_H);
+  assert.ok(Number.isFinite(s.struct.R) && s.struct.R > 0, `R was ${s.struct.R}`);
+  assert.ok(Number.isFinite(s.struct.L) && s.struct.L > 0, `L was ${s.struct.L}`);
+  assert.ok(Number.isFinite(s.struct.tC) && s.struct.tC > 0, `tC was ${s.struct.tC}`);
+});

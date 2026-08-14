@@ -397,5 +397,121 @@
     return { R, rhoC, tC, n, L, tEff, rho, T, m };
   }
 
-  return { laneEmden, eos, meanMolecularWeight, epsPP, epsCNO, eps3a, burnShell, structure, CAL, G, K_B, M_U, A_RAD, SIGMA, M_SUN, R_SUN, L_SUN, YEAR };
+  const PHASES = {
+    PRE: 'pre-main-sequence',
+    MS: 'main sequence',
+    POST_H: 'hydrogen exhausted',
+  };
+
+  const DT_SAFETY = 0.02;
+  const DT_MAX = 1e8 * YEAR;   // s, so a near-inert star can't step past the age of the universe
+  const DT_MIN = 1.0;          // s, floor so a numerical spike can't stall the sim
+
+  /**
+   * Mass-weighted mean composition across all shells (dimensionless mass
+   * fractions in, same out). Shells are equal-mass, so an unweighted mean
+   * over shells IS the mass-weighted mean over the star -- do not "fix"
+   * this into a weighted sum.
+   */
+  function meanComposition(comp) {
+    const out = {};
+    for (const key in SPECIES) {
+      let sum = 0;
+      for (let i = 0; i < comp.length; i++) sum += comp[i][key] || 0;
+      out[key] = sum / comp.length;
+    }
+    return out;
+  }
+
+  /**
+   * Build a new star. massSolar in solar masses (dimensionless).
+   * opts.shells: shell count (default 200). opts.metallicity: mass
+   * fraction Z (default 0.02). Returns state with M in g, age/dt in s.
+   */
+  function createStar(massSolar, opts) {
+    opts = opts || {};
+    const shells = opts.shells || 200;
+    const Z = opts.metallicity === undefined ? 0.02 : opts.metallicity;
+    const comp = [];
+    for (let i = 0; i < shells; i++) {
+      comp.push({ H1: 0.70, He4: 0.30 - Z, C12: Z });
+    }
+    const state = {
+      M: massSolar * M_SUN,
+      massSolar,
+      age: 0,
+      dt: 0,
+      shells,
+      comp,
+      phase: PHASES.MS,
+      alive: true,
+      struct: null,
+    };
+    state.struct = structure(state.M, meanComposition(comp), shells);
+    return state;
+  }
+
+  /**
+   * Advance state by one adaptive timestep, in place, and return it.
+   * state.dt (s) is set to the seconds advanced. dt is capped by the
+   * FASTEST-burning shell's fuel-exhaustion timescale, not a global
+   * average, scaled by DT_SAFETY and clamped to [DT_MIN, DT_MAX].
+   *
+   * Once phase reaches POST_H, alive is set false and struct is frozen:
+   * structure() has no radius at which nuclear output can match the
+   * required luminosity once core hydrogen is gone, so re-solving would
+   * silently return a nonsense star. Slice 2 replaces this freeze with
+   * the red giant branch. Stepping a dead star is a no-op (dt = 0).
+   */
+  function step(state) {
+    if (!state.alive) {
+      state.dt = 0;
+      return state;
+    }
+
+    const s = state.struct;
+
+    // Timescale of the FASTEST-burning shell, never a global average:
+    // a shell burning on a timescale of days must not be stepped over by
+    // a step sized for the star's million-year average.
+    let dt = DT_MAX;
+    for (let i = 0; i < state.shells; i++) {
+      const c = state.comp[i];
+      const X = c.H1 || 0, Y = c.He4 || 0;
+      let Z = 0;
+      for (const k in SPECIES) if (k !== 'H1' && k !== 'He4') Z += c[k] || 0;
+      const rate = epsPP(s.rho[i], s.T[i], X) +
+                   epsCNO(s.rho[i], s.T[i], X, Z) +
+                   eps3a(s.rho[i], s.T[i], Y);
+      if (rate <= 0) continue;
+      const fuel = X * Q_H + Y * Q_HE;   // erg/g still available
+      const tau = fuel / rate;           // s
+      if (tau < dt) dt = tau;
+    }
+    dt = Math.max(DT_MIN, Math.min(DT_MAX, dt * DT_SAFETY));
+
+    for (let i = 0; i < state.shells; i++) {
+      const { dComp } = burnShell(s.rho[i], s.T[i], state.comp[i], dt);
+      for (const k in dComp) {
+        state.comp[i][k] = (state.comp[i][k] || 0) + dComp[k];
+        if (state.comp[i][k] < 0) state.comp[i][k] = 0;
+      }
+    }
+
+    state.age += dt;
+    state.dt = dt;
+    state.phase = state.comp[0].H1 > 0.01 ? PHASES.MS : PHASES.POST_H;
+
+    if (state.phase === PHASES.POST_H) {
+      // Core hydrogen just ran out: freeze struct at its last valid value
+      // and stop the star rather than let structure() bisect to a
+      // meaningless small-radius endpoint. See the doc comment above.
+      state.alive = false;
+    } else {
+      state.struct = structure(state.M, meanComposition(state.comp), state.shells);
+    }
+    return state;
+  }
+
+  return { laneEmden, eos, meanMolecularWeight, epsPP, epsCNO, eps3a, burnShell, structure, createStar, step, meanComposition, PHASES, CAL, G, K_B, M_U, A_RAD, SIGMA, M_SUN, R_SUN, L_SUN, YEAR };
 });
