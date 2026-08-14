@@ -76,7 +76,10 @@
       <button id="play">⏸ Pause</button>
 
       <label for="yps">Years per second (<span id="ypsv">—</span>)</label>
-      <input type="range" id="yps" min="3" max="9.5" step="0.1" value="7">
+      <!-- min=5 (1.0e5 yr/s), not lower: a timestep is ~2 Myr for a solar-mass
+           star, so below ~1e5 yr/s the gap between steps runs multiple real
+           seconds and the display reads as frozen rather than just slow. -->
+      <input type="range" id="yps" min="5" max="9.5" step="0.1" value="7">
 
       <table id="readouts">
         <tr><td class="k">Radius</td><td class="v"><span id="rRadius">—</span> R☉</td></tr>
