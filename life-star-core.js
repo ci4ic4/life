@@ -176,24 +176,39 @@
     const gammaDeg = (5 / 3) * (1 - f) + (4 / 3) * f;
     const gamma1 = (pGas * (5 / 3) + pRad * (4 / 3) + pDeg * gammaDeg) / P;
 
+    return { P, pGas, pRad, pDeg, gamma1, n: polytropeIndex(gamma1) };
+  }
+
+  /**
+   * Polytrope index n from the adiabatic exponent gamma1 (both dimensionless).
+   * Clamp [1.0, 3.4] is deliberately wider than the reachable [1.5, 3.0] to
+   * catch non-finite input (e.g., from P=0 or gamma1=NaN) before it
+   * propagates to laneEmden.
+   *
+   * Split out from eos() as the seam slice 2 needs: the envelope's index has
+   * to be FORCED rather than derived from gamma1 (see the ledger's n=1.5-vs-
+   * n=3 note), and eos() had no way to be overridden before this existed.
+   */
+  function polytropeIndex(gamma1) {
     let n = 1 / (gamma1 - 1);
-    // Clamp [1.0, 3.4] is deliberately wider than the reachable [1.5, 3.0] to catch
-    // non-finite input (e.g., from P=0 or gamma1=NaN) before it propagates to laneEmden.
     if (!Number.isFinite(n) || n > 3.4) n = 3.4;
     if (n < 1.0) n = 1.0;
-
-    return { P, pGas, pRad, pDeg, gamma1, n };
+    return n;
   }
 
   // Calibration multipliers. Published rate coefficients omit electron
   // screening and are fitted over limited ranges; composing them with an
   // approximate structure model does not land on the solar luminosity by
-  // itself. Tuned once in the Task 5 integration test.
+  // itself in general -- but with correctly-converted coefficients (see
+  // below), structure(M_SUN, SOLAR) already lands inside the brief's
+  // brackets with all three left at 1.0, so no tuning has been done yet.
   //
-  // CAL.pp = 1.0 (Task 4 fix round 1): with correctly-converted coefficients
-  // (see below), structure(M_SUN, SOLAR) lands inside the brief's brackets
-  // with no multiplier needed. See the fix report for the resulting solar
-  // R, T_c, rho_c, L.
+  // Deliberately left at 1.0, not tuned: this model's envelope solves as an
+  // n=1.5 polytrope (ideal-gas gamma1) rather than the real Sun's n=3
+  // (radiative), which runs the 1 solar mass lifetime ~2x long (see the
+  // ledger). Slice 2's structural fix -- forcing the envelope index instead
+  // of deriving it -- changes what calibration is even needed, so it should
+  // be done once against the corrected structure rather than twice.
   const CAL = { pp: 1.0, cno: 1.0, he: 1.0 };
 
   // Published nuclear rate coefficients (Carroll & Ostlie) are given in
@@ -222,8 +237,9 @@
    * CNO cycle, erg/g/s. Effective exponent near 25 MK is about 17.
    * Uses total metallicity Z as the catalyst mass fraction; the published
    * formula wants X_CNO specifically (the C+N+O fraction), roughly Z/2 for
-   * a solar mix. Using Z overestimates the rate by about 2x, which CAL.cno
-   * absorbs.
+   * a solar mix. Using Z overestimates the rate by about 2x. Currently
+   * uncorrected -- CAL.cno is the intended knob, left at 1.0 until slice 2
+   * calibrates against the corrected structure (see the CAL comment above).
    */
   function epsCNO(rho, T, X, Z) {
     if (T <= 0 || X <= 0 || Z <= 0) return 0;
@@ -523,5 +539,5 @@
     return state;
   }
 
-  return { laneEmden, eos, meanMolecularWeight, epsPP, epsCNO, eps3a, burnShell, structure, createStar, step, meanComposition, PHASES, CAL, G, K_B, M_U, A_RAD, SIGMA, M_SUN, R_SUN, L_SUN, YEAR };
+  return { laneEmden, eos, polytropeIndex, meanMolecularWeight, epsPP, epsCNO, eps3a, burnShell, structure, createStar, step, meanComposition, PHASES, CAL, G, K_B, M_U, A_RAD, SIGMA, M_SUN, R_SUN, L_SUN, YEAR };
 });
