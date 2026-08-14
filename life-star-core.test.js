@@ -51,8 +51,8 @@ test('laneEmden memoises: same n returns the identical object', () => {
 });
 
 test('eos: ideal-gas-dominated matter gives gamma1 = 5/3 and n = 1.5', () => {
-  // Low density, moderate temperature: gas dominates over radiation and
-  // degeneracy by many orders of magnitude.
+  // Low density, moderate temperature: gas dominates over radiation by ~55x
+  // and over degeneracy by ~441x.
   const r = LS.eos(1.0, 1e7, 0.6, 2.0);
   assert.ok(Math.abs(r.gamma1 - 5 / 3) < 0.01, `gamma1 was ${r.gamma1}`);
   assert.ok(Math.abs(r.n - 1.5) < 0.02, `n was ${r.n}`);
@@ -78,11 +78,18 @@ test('eos: cold very dense matter is relativistically degenerate', () => {
   assert.ok(Math.abs(r.gamma1 - 4 / 3) < 0.05, `gamma1 was ${r.gamma1}`);
 });
 
-test('eos: n is clamped into [1.0, 3.4]', () => {
+test('eos: n stays within [1.5, 3.0] across all physical regimes', () => {
   for (const [rho, T] of [[1e-8, 1e9], [1e10, 1e4], [1, 1e7], [1e6, 1e8]]) {
     const r = LS.eos(rho, T, 0.6, 2.0);
-    assert.ok(r.n >= 1.0 && r.n <= 3.4, `n was ${r.n} at rho=${rho} T=${T}`);
+    assert.ok(r.n >= 1.5 && r.n <= 3.0, `n was ${r.n} at rho=${rho} T=${T}`);
   }
+});
+
+test('eos: NaN from zero pressure is clamped to n = 3.4', () => {
+  // P = 0 gives gamma1 = 0/0 = NaN, which must not propagate to laneEmden.
+  const r = LS.eos(0, 0, 0.6, 2.0);
+  assert.ok(Number.isFinite(r.n), `n must be finite, got ${r.n}`);
+  assert.strictEqual(r.n, 3.4, `n should be clamped to 3.4, got ${r.n}`);
 });
 
 test('meanMolecularWeight: pure ionised hydrogen gives mu = 0.5, muE = 1', () => {

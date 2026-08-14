@@ -118,7 +118,11 @@
     Fe56: [56, 26],
   };
 
-  /** Mean molecular weight and mean molecular weight per electron. */
+  /**
+   * Mean molecular weight and mean molecular weight per electron.
+   * Input X is composition as mass fractions (dimensionless).
+   * Returns mu and muE (dimensionless).
+   */
   function meanMolecularWeight(X) {
     let invMu = 0, invMuE = 0;
     for (const key in SPECIES) {
@@ -129,6 +133,7 @@
       invMuE += frac * Z / A;
     }
     return {
+      // 1e9 is a "no ionised species present" sentinel to avoid returning Infinity.
       mu: invMu > 0 ? 1 / invMu : 1e9,
       muE: invMuE > 0 ? 1 / invMuE : 1e9,
     };
@@ -136,7 +141,8 @@
 
   /**
    * Total pressure and the adiabatic index at (rho, T).
-   * rho g/cm^3, T K. Returns P in dyn/cm^2.
+   * rho g/cm^3, T K, mu dimensionless, muE dimensionless.
+   * Returns P in dyn/cm^2, gamma1 dimensionless, n dimensionless.
    *
    * gamma1 is the ADIABATIC exponent, not the isothermal one. The isothermal
    * d lnP / d ln rho for an ideal gas is 1, which would give n = infinity.
@@ -163,6 +169,8 @@
     const gamma1 = (pGas * (5 / 3) + pRad * (4 / 3) + pDeg * gammaDeg) / P;
 
     let n = 1 / (gamma1 - 1);
+    // Clamp [1.0, 3.4] is deliberately wider than the reachable [1.5, 3.0] to catch
+    // non-finite input (e.g., from P=0 or gamma1=NaN) before it propagates to laneEmden.
     if (!Number.isFinite(n) || n > 3.4) n = 3.4;
     if (n < 1.0) n = 1.0;
 
