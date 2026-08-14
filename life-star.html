@@ -160,13 +160,14 @@ let selected = 1;                     // index shown in the cross-section (1 Msu
 // that bisection). A clean Node (V8) benchmark of LifeStar.step in a tight
 // loop gives 3.15 ms/step. Against a 10 ms frame budget that supports
 // floor(10 / 3.15) = 3 steps; against a full 16.67 ms frame (60fps with zero
-// draw/readout cost) it supports 5. Landed on 4 for one star (Task 6) and it
-// is NOT raised here even though there are now four stars: the debt
-// accumulator below means most frames step zero or one of the four (their
-// dt's differ by orders of magnitude, so they rarely all come due at once),
-// and a hard per-star cap of 4 bounds the true worst case -- all four due in
-// the same frame -- at 16 steps, which is the honest price of an occasional
-// slow frame rather than a reason to loosen the guard everywhere else.
+// draw/readout cost) it supports 5. Landed on 4 for one star (Task 6).
+// The 10ms budget belongs to the FRAME, not to any one star, so with four
+// stars this is a total shared across all of them in the frame() loop below
+// (a `stepsThisFrame` counter every star's step loop draws from), not a
+// per-star allowance -- four stars each independently allowed 4 steps could
+// reach ~50ms in one frame, five times the budget this constant was
+// measured against. Kept at 4 total, matching the original single-star
+// derivation exactly regardless of how many of the four are due at once.
 const MAX_STEPS_PER_FRAME = 4;
 
 let yearsPerSecond = Math.pow(10, +$('yps').value);
@@ -182,12 +183,6 @@ let lastFrame = performance.now();
 // its own debt) simply falls behind the requested rate, exactly as the
 // achieved-rate readout already reports for one star.
 let simYearsDebt = FAMILY.map(() => 0);
-
-// The nominal shared clock: what all four stars are advancing toward. Purely
-// a display figure (Elapsed, below) -- each star's own state.age is the
-// thing that actually gates its physics and can trail this by up to a
-// couple of its own dt's if it's rate-limited.
-let simYears = 0;
 
 // ---- achieved-rate tracking (for the selected star only) ----------------
 // The requested years-per-second is not always what the guard above can
@@ -422,7 +417,15 @@ function updateReadouts(state, achieved) {
 }
 
 function updateFamilyReadouts() {
-  $('fAge').textContent = formatAge(simYears);
+  // Elapsed is a MEASUREMENT of the stars, not an input to them: the max
+  // age actually reached across the family. A separately-accumulated
+  // "requested time" counter drifts from what the stars really did whenever
+  // the debt cap clamps a long frame (paused tab, slow frame) -- the star's
+  // debt is capped, but a free-running accumulator wouldn't know that and
+  // would keep counting the clamped-away time anyway. Deriving from
+  // state.age instead makes drift impossible by construction.
+  const elapsedYears = Math.max(...stars.map((s) => s.age)) / LifeStar.YEAR;
+  $('fAge').textContent = formatAge(elapsedYears);
   $('fRate').textContent = formatRate(yearsPerSecond) + (running ? '' : ' (paused)');
 
   const table = $('familyTable');
@@ -447,7 +450,12 @@ function frame(now) {
   lastFrame = now;
   if (running) {
     const deltaYears = yearsPerSecond * elapsedSeconds;
-    simYears += deltaYears;
+    // Shared across all four stars: the 10ms frame budget belongs to the
+    // frame, not to each star individually, so the step count that drains
+    // it must be shared too. Was a per-star cap (four stars x 4 steps could
+    // reach ~50ms in one frame); now the same MAX_STEPS_PER_FRAME=4 total
+    // this constant was originally derived against for a single star.
+    let stepsThisFrame = 0;
 
     stars.forEach((star, i) => {
       if (!star.alive) return;
@@ -459,12 +467,12 @@ function frame(now) {
       const lastDtYears = star.dt / LifeStar.YEAR;
       if (lastDtYears > 0) simYearsDebt[i] = Math.min(simYearsDebt[i], lastDtYears * 3);
 
-      // Step only while this star's own debt covers a step's cost, with a
-      // hard per-star iteration cap so four stars due in the same frame still
-      // can't freeze the browser.
-      for (let guard = 0; guard < MAX_STEPS_PER_FRAME; guard++) {
+      // Step only while this star's own debt covers a step's cost, with the
+      // shared per-frame budget as the hard ceiling.
+      while (stepsThisFrame < MAX_STEPS_PER_FRAME) {
         if (star.dt > 0 && simYearsDebt[i] < star.dt / LifeStar.YEAR) break;
         LifeStar.step(star);
+        stepsThisFrame++;
         simYearsDebt[i] -= star.dt / LifeStar.YEAR;
         if (!star.alive) break;
       }
