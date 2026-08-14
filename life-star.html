@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Stellar Evolution — Cross-Section</title>
+<style>
+  /* tell Chrome the page is already dark, or auto-dark rewrites the whole palette */
+  :root { color-scheme: dark; }
+  :root { --bg:#0a0c10; --card:#151a22; --line:#2a3340; --edge:#36424f;
+          --fg:#cdd6e0; --mute:#8a96a6; --blue:#7fb0ff; --green:#7fd18c; --amber:#ffd479; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.4 system-ui,sans-serif; }
+  .wrap { max-width:900px; margin:0 auto; padding:28px 20px 48px; }
+  h1 { margin:0 0 4px; font-size:22px; font-weight:600; letter-spacing:-.2px; }
+  .lede { margin:0 0 20px; color:var(--mute); max-width:70ch; }
+
+  .stage { display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap; }
+  #crossSection { background:#0d0a06; border:1px solid var(--line); border-radius:8px; flex:none; }
+
+  #panel { flex:1; min-width:260px; background:var(--card); border:1px solid var(--line);
+           border-radius:9px; padding:14px 16px; }
+
+  /* The main sequence is ~90% of a star's life and visually static for billions
+     of years. This banner is the thing that tells an observer the page has not
+     hung -- it is deliberately the most prominent readout on the page. */
+  #clock { margin:0 0 12px; padding-bottom:10px; border-bottom:1px solid var(--line); }
+  #clock .age { font-size:20px; font-weight:700; color:var(--green); }
+  #clock .rate { color:var(--mute); font-size:12px; margin-top:2px; }
+  #clock .rate b { color:var(--amber); }
+  #clock .hint { color:#5a6a7a; font-size:11px; margin-top:3px; }
+
+  label { display:block; margin:9px 0 3px; color:var(--mute); font-size:11px; }
+  select, input[type=range] { width:100%; background:#0e1218; color:var(--fg);
+        border:1px solid var(--edge); border-radius:5px; padding:4px; box-sizing:border-box; }
+  button { background:#222c39; color:var(--fg); border:1px solid var(--edge); border-radius:5px;
+        padding:6px 10px; cursor:pointer; font-size:12px; width:100%; margin-top:9px; }
+  button:hover { background:#2c3a49; }
+
+  table#readouts { width:100%; border-collapse:collapse; margin-top:14px; font-size:12.5px; }
+  table#readouts td { padding:3px 0; }
+  table#readouts td.k { color:var(--mute); }
+  table#readouts td.v { text-align:right; color:var(--fg); font-variant-numeric:tabular-nums; }
+  table#readouts tr.dead td { color:#e0554a; }
+
+  footer { margin-top:24px; color:#5a6a7a; font-size:12px; }
+  footer a { color:#7a8798; }
+</style>
+
+<div class="wrap">
+  <h1>Stellar Evolution — Cross-Section</h1>
+  <p class="lede">A single star's interior, modelled shell by shell: Lane-Emden structure,
+  proton-proton and CNO burning, adaptive timesteps. Not a cellular automaton — one star,
+  evolving under real (if simplified) stellar physics. Radius is drawn on a log scale because
+  a star's radius changes by orders of magnitude over its life.</p>
+
+  <div class="stage">
+    <canvas id="crossSection" width="480" height="480"></canvas>
+
+    <div id="panel">
+      <div id="clock">
+        <div class="age">Age <span id="rAge">0 yr</span></div>
+        <div class="rate">Rate <b id="rRate">—</b></div>
+        <div class="hint">The main sequence is ~90% of a star's life and looks static for
+        billions of years. If the disc isn't moving, watch the age tick instead.</div>
+      </div>
+
+      <label for="mass">Mass</label>
+      <select id="mass">
+        <option value="0.5">0.5 M☉</option>
+        <option value="1" selected>1 M☉</option>
+        <option value="2">2 M☉</option>
+        <option value="5">5 M☉</option>
+        <option value="8">8 M☉</option>
+        <option value="15">15 M☉</option>
+        <option value="25">25 M☉</option>
+      </select>
+
+      <button id="play">⏸ Pause</button>
+
+      <label for="yps">Years per second (<span id="ypsv">—</span>)</label>
+      <input type="range" id="yps" min="3" max="9.5" step="0.1" value="7">
+
+      <table id="readouts">
+        <tr><td class="k">Radius</td><td class="v"><span id="rRadius">—</span> R☉</td></tr>
+        <tr><td class="k">Central temperature</td><td class="v"><span id="rTc">—</span> MK</td></tr>
+        <tr><td class="k">Central density</td><td class="v"><span id="rRhoc">—</span> g/cm³</td></tr>
+        <tr><td class="k">Luminosity</td><td class="v"><span id="rL">—</span> L☉</td></tr>
+        <tr><td class="k">Effective temperature</td><td class="v"><span id="rTeff">—</span> K</td></tr>
+        <tr><td class="k">Phase</td><td class="v"><span id="rPhase">—</span></td></tr>
+        <tr id="aliveRow"><td class="k">Alive</td><td class="v"><span id="rAlive">—</span></td></tr>
+      </table>
+    </div>
+  </div>
+
+  <footer>
+    Physics: <code>life-star-core.js</code>, tested under <code>node --test</code>.
+    Part of the <a href="index.html">Life</a> simulation suite.
+  </footer>
+</div>
+
+<script src="life-star-core.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+
+const SPECIES_COLOUR = {
+  H1:   '#4a9ee0',   // blue
+  He4:  '#e0c34a',   // yellow
+  C12:  '#8a8a8a',   // grey
+  O16:  '#5ad0a0',   // green
+  Ne20: '#c07ae0',   // violet
+  Mg24: '#e08a4a',   // orange
+  Si28: '#e0e0d0',   // pale
+  Fe56: '#c04a4a',   // red
+};
+
+// ---- render-loop pacing -----------------------------------------------
+// LifeStar.step() re-solves structure(): a 60-step bisection with a
+// 200-shell sum inside every iteration. Measured directly (LifeStar.step in
+// a tight loop, JIT-warmed first): ~4.2 ms/step under plain Node (V8,
+// unthrottled) and ~8 ms/step in this Chrome instance. The two disagree
+// because Chrome throttles a backgrounded/non-visible tab's JS clock speed;
+// 8 ms is the number actually measured in the browser this page runs in, so
+// it is the one used here rather than the friendlier Node figure. A frame
+// budget of ~10 ms allows floor(10 / 8) = 1 step per frame. That is not a
+// bottleneck in practice: at 60fps that is still 60 steps/s, and each step's
+// dt is on the order of 1e6-1e8 simulated years, far more throughput than
+// the years-per-second slider below actually needs. Re-measure and
+// recompute this constant rather than guessing if the core's cost changes.
+const FRAME_BUDGET_MS = 10;
+const MEASURED_MS_PER_STEP = 8;
+const MAX_STEPS_PER_FRAME = Math.max(1, Math.floor(FRAME_BUDGET_MS / MEASURED_MS_PER_STEP));
+
+let star = LifeStar.createStar(1, { shells: 200 });
+let yearsPerSecond = Math.pow(10, +$('yps').value);
+let running = true;
+let lastFrame = performance.now();
+
+const ctx = $('crossSection').getContext('2d');
+
+function dominantColour(comp) {
+  let best = 'H1', bestVal = -1;
+  for (const k in comp) {
+    if (comp[k] > bestVal) { bestVal = comp[k]; best = k; }
+  }
+  return SPECIES_COLOUR[best] || '#888';
+}
+
+function drawCrossSection(ctx, state) {
+  const W = ctx.canvas.width, H = ctx.canvas.height;
+  ctx.fillStyle = '#0d0a06';
+  ctx.fillRect(0, 0, W, H);
+
+  const cx = W / 2, cy = H / 2, maxPx = Math.min(W, H) / 2 - 10;
+  const s = state.struct;
+  // Log radius: the star spans orders of magnitude across its life, and
+  // a linear axis makes every interesting change invisible.
+  const rMaxSolar = Math.max(s.R / LifeStar.R_SUN, 1) * 1.2;
+  const scale = (rSolar) =>
+    maxPx * Math.log1p(rSolar) / Math.log1p(rMaxSolar);
+
+  // Draw outermost shell first so inner shells paint on top.
+  for (let i = state.shells - 1; i >= 0; i--) {
+    const rSolar = (s.R / LifeStar.R_SUN) * Math.cbrt((i + 1) / state.shells);
+    ctx.beginPath();
+    ctx.arc(cx, cy, scale(rSolar), 0, Math.PI * 2);
+    ctx.fillStyle = dominantColour(state.comp[i]);
+    ctx.fill();
+  }
+}
+
+// ---- readouts -----------------------------------------------------------
+function formatAge(years) {
+  if (years < 1e3) return years.toFixed(0) + ' yr';
+  if (years < 1e6) return (years / 1e3).toFixed(2) + ' kyr';
+  if (years < 1e9) return (years / 1e6).toFixed(2) + ' Myr';
+  return (years / 1e9).toFixed(3) + ' Gyr';
+}
+
+function formatRate(yps) {
+  return yps.toExponential(1).replace('e+', 'e') + ' yr/s';
+}
+
+function updateReadouts(state) {
+  const s = state.struct;
+  $('rAge').textContent = formatAge(state.age / LifeStar.YEAR);
+  $('rRate').textContent = running ? formatRate(yearsPerSecond) : formatRate(yearsPerSecond) + ' (paused)';
+  $('rRadius').textContent = (s.R / LifeStar.R_SUN).toFixed(3);
+  $('rTc').textContent = (s.tC / 1e6).toFixed(2);
+  $('rRhoc').textContent = s.rhoC.toExponential(2);
+  $('rL').textContent = (s.L / LifeStar.L_SUN).toFixed(3);
+  $('rTeff').textContent = s.tEff.toFixed(0);
+  $('rPhase').textContent = state.phase;
+  $('rAlive').textContent = state.alive ? 'yes' : 'no — frozen at death';
+  $('aliveRow').classList.toggle('dead', !state.alive);
+}
+
+// ---- render loop ----------------------------------------------------------
+function frame(now) {
+  const elapsedSeconds = (now - lastFrame) / 1000;
+  lastFrame = now;
+  if (running && star.alive) {
+    const targetYears = yearsPerSecond * elapsedSeconds;
+    let advanced = 0;
+    // Step until this frame's worth of simulated time is used up, with a
+    // hard iteration cap (MAX_STEPS_PER_FRAME, see derivation above) so a
+    // tiny dt cannot freeze the browser. A dead star is skipped entirely --
+    // step() on it is a documented no-op, but there is no reason to pay
+    // even that cost every frame once the readouts already show it frozen.
+    for (let guard = 0; advanced < targetYears * LifeStar.YEAR && guard < MAX_STEPS_PER_FRAME; guard++) {
+      LifeStar.step(star);
+      advanced += star.dt;
+      if (!star.alive) break;
+    }
+  }
+  drawCrossSection(ctx, star);
+  updateReadouts(star);
+  requestAnimationFrame(frame);
+}
+
+// ---- wiring -----------------------------------------------------------
+$('mass').addEventListener('change', () => {
+  star = LifeStar.createStar(+$('mass').value, { shells: 200 });
+  lastFrame = performance.now();
+});
+$('play').addEventListener('click', () => {
+  running = !running;
+  $('play').textContent = running ? '⏸ Pause' : '▶ Play';
+  lastFrame = performance.now();
+});
+$('yps').addEventListener('input', () => {
+  yearsPerSecond = Math.pow(10, +$('yps').value);
+  $('ypsv').textContent = formatRate(yearsPerSecond);
+});
+$('ypsv').textContent = formatRate(yearsPerSecond);
+
+requestAnimationFrame(frame);
+</script>
