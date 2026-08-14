@@ -190,13 +190,20 @@
   // approximate structure model does not land on the solar luminosity by
   // itself. Tuned once in the Task 5 integration test.
   //
-  // CAL.pp = 100 (Task 4): with it, structure(M_SUN, SOLAR) gives
-  // R = 0.472 R_sun, T_c = 1.51e7 K, rho_c = 80.2 g/cm^3, L = 1.12 L_sun —
-  // all inside the brief's generous solar brackets. Untuned (CAL.pp = 1)
-  // undershoots the radius bracket (R = 0.31 R_sun) because the Gamow-peak
-  // pp rate as published, composed with this polytrope structure and the
-  // L ~ mu^4 M^3 homology target, runs too hot for a given R.
-  const CAL = { pp: 100, cno: 1.0, he: 1.0 };
+  // CAL.pp = 1.0 (Task 4 fix round 1): with correctly-converted coefficients
+  // (see below), structure(M_SUN, SOLAR) lands inside the brief's brackets
+  // with no multiplier needed. See the fix report for the resulting solar
+  // R, T_c, rho_c, L.
+  const CAL = { pp: 1.0, cno: 1.0, he: 1.0 };
+
+  // Published nuclear rate coefficients (Carroll & Ostlie) are given in
+  // W/kg with density in kg/m^3. Converting to this file's erg/g/s with
+  // rho in g/cm^3 takes a factor of 1e7 (1e4 from W/kg -> erg/g/s, times
+  // 1e3 from rho_SI -> rho_cgs), applied once to the coefficient below.
+  // Getting this wrong is silent: the structure solver just shrinks R
+  // until the (wrong) rate meets the required luminosity, and every test
+  // still passes with the wrong radius — which is what happened before
+  // this fix (CAL.pp = 100 was compensating for a 100x unit error).
 
   /**
    * Proton-proton chain, erg/g/s. Gamow-peak form, NOT a power law:
@@ -207,15 +214,21 @@
   function epsPP(rho, T, X) {
     if (T <= 0 || X <= 0) return 0;
     const T6 = T / 1e6;
-    return CAL.pp * 2.4e4 * rho * X * X *
+    return CAL.pp * 2.41e6 * rho * X * X *
       Math.pow(T6, -2 / 3) * Math.exp(-33.80 * Math.pow(T6, -1 / 3));
   }
 
-  /** CNO cycle, erg/g/s. Effective exponent near 25 MK is about 17. */
+  /**
+   * CNO cycle, erg/g/s. Effective exponent near 25 MK is about 17.
+   * Uses total metallicity Z as the catalyst mass fraction; the published
+   * formula wants X_CNO specifically (the C+N+O fraction), roughly Z/2 for
+   * a solar mix. Using Z overestimates the rate by about 2x, which CAL.cno
+   * absorbs.
+   */
   function epsCNO(rho, T, X, Z) {
     if (T <= 0 || X <= 0 || Z <= 0) return 0;
     const T6 = T / 1e6;
-    return CAL.cno * 4.4e25 * rho * X * Z *
+    return CAL.cno * 8.67e27 * rho * X * Z *
       Math.pow(T6, -2 / 3) * Math.exp(-152.28 * Math.pow(T6, -1 / 3));
   }
 
@@ -223,7 +236,7 @@
   function eps3a(rho, T, Y) {
     if (T <= 0 || Y <= 0) return 0;
     const T8 = T / 1e8;
-    return CAL.he * 5.1e8 * rho * rho * Y * Y * Y *
+    return CAL.he * 5.09e8 * rho * rho * Y * Y * Y *
       Math.pow(T8, -3) * Math.exp(-44.027 / T8);
   }
 
