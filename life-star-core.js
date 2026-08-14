@@ -189,7 +189,14 @@
   // screening and are fitted over limited ranges; composing them with an
   // approximate structure model does not land on the solar luminosity by
   // itself. Tuned once in the Task 5 integration test.
-  const CAL = { pp: 1.0, cno: 1.0, he: 1.0 };
+  //
+  // CAL.pp = 100 (Task 4): with it, structure(M_SUN, SOLAR) gives
+  // R = 0.472 R_sun, T_c = 1.51e7 K, rho_c = 80.2 g/cm^3, L = 1.12 L_sun —
+  // all inside the brief's generous solar brackets. Untuned (CAL.pp = 1)
+  // undershoots the radius bracket (R = 0.31 R_sun) because the Gamow-peak
+  // pp rate as published, composed with this polytrope structure and the
+  // L ~ mu^4 M^3 homology target, runs too hot for a given R.
+  const CAL = { pp: 100, cno: 1.0, he: 1.0 };
 
   /**
    * Proton-proton chain, erg/g/s. Gamow-peak form, NOT a power law:
@@ -252,5 +259,128 @@
     return { energy, dComp };
   }
 
-  return { laneEmden, eos, meanMolecularWeight, epsPP, epsCNO, eps3a, burnShell, CAL, G, K_B, M_U, A_RAD, SIGMA, M_SUN, R_SUN, L_SUN, YEAR };
+  /** Invert the EOS for temperature at a given density and pressure. */
+  function temperatureFor(rho, P, mu, muE) {
+    let lo = Math.log(1e3), hi = Math.log(1e11);
+    // eos is monotonically increasing in T at fixed rho.
+    for (let i = 0; i < 80; i++) {
+      const mid = 0.5 * (lo + hi);
+      if (eos(rho, Math.exp(mid), mu, muE).P < P) lo = mid; else hi = mid;
+    }
+    return Math.exp(0.5 * (lo + hi));
+  }
+
+  /** Central conditions and polytrope index for a trial radius. */
+  function centralState(M, R, mu, muE) {
+    let n = 3;
+    let rhoC = 0, tC = 0, le = null;
+    for (let iter = 0; iter < 4; iter++) {
+      le = laneEmden(n);
+      const thetaPrime1 = -le.massFactor / (le.xi1 * le.xi1);
+      const Wn = 1 / (4 * Math.PI * (n + 1) * thetaPrime1 * thetaPrime1);
+      const rhoMean = M / ((4 / 3) * Math.PI * R * R * R);
+      rhoC = rhoMean * Math.pow(le.xi1, 3) / (3 * le.massFactor);
+      const pC = Wn * G * M * M / Math.pow(R, 4);
+      tC = temperatureFor(rhoC, pC, mu, muE);
+      n = eos(rhoC, tC, mu, muE).n;
+    }
+    return { n, rhoC, tC, le };
+  }
+
+  /**
+   * theta at a given enclosed-mass fraction. The Lane-Emden solution is
+   * sampled on xi, but the composition grid is Lagrangian, so this converts
+   * between them. Cached per profile because the mapping never changes.
+   */
+  function thetaAtMassFraction(le, mFrac) {
+    if (!le._massTable) {
+      const N = le.xi.length;
+      const cum = new Float64Array(N);
+      let acc = 0;
+      for (let i = 1; i < N; i++) {
+        const xi = le.xi[i], dxi = le.xi[i] - le.xi[i - 1];
+        const th = Math.max(le.theta[i], 0);
+        acc += xi * xi * Math.pow(th, le.n) * dxi;
+        cum[i] = acc;
+      }
+      for (let i = 0; i < N; i++) cum[i] /= acc || 1;
+      le._massTable = cum;
+    }
+    const cum = le._massTable;
+    // Binary search for the first index whose cumulative mass exceeds mFrac.
+    let lo = 0, hi = cum.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (cum[mid] < mFrac) lo = mid + 1; else hi = mid;
+    }
+    return le.theta[lo];
+  }
+
+  /**
+   * Solve for the equilibrium structure of a star of mass M (g) and
+   * composition comp (mass fractions). shells is the shell count (default
+   * 200). Returns R (cm), rhoC (g/cm^3), tC (K), n (dimensionless polytrope
+   * index), L (erg/s), tEff (K), and rho/T/m profiles (Float64Array) sampled
+   * on the Lagrangian mass grid (rho g/cm^3, T K, m g enclosed mass).
+   *
+   * Radius is whatever makes nuclear output match the luminosity the star
+   * must radiate.
+   *
+   * ponytail: L_target uses the homology result L ~ mu^4 M^3 from radiative
+   * diffusion with electron-scattering opacity, anchored at the Sun. No
+   * opacity table, no radiative transfer. Upgrade path is a real Kramers
+   * opacity and a solved transport equation, which is a different project.
+   */
+  function structure(M, comp, shells) {
+    shells = shells || 200;
+    const { mu, muE } = meanMolecularWeight(comp);
+    const X = comp.H1 || 0;
+    const Y = comp.He4 || 0;
+    let Z = 0;
+    for (const k in SPECIES) if (k !== 'H1' && k !== 'He4') Z += comp[k] || 0;
+
+    const lTarget = L_SUN * Math.pow(M / M_SUN, 3) * Math.pow(mu / 0.6, 4);
+
+    // Nuclear luminosity for a trial radius.
+    const nuclear = (R) => {
+      const { n, rhoC, tC, le } = centralState(M, R, mu, muE);
+      let total = 0;
+      const dm = M / shells;
+      for (let i = 0; i < shells; i++) {
+        const mFrac = (i + 0.5) / shells;
+        const theta = thetaAtMassFraction(le, mFrac);
+        const rho = rhoC * Math.pow(Math.max(theta, 0), n);
+        const T = tC * Math.max(theta, 0);
+        total += (epsPP(rho, T, X) + epsCNO(rho, T, X, Z) + eps3a(rho, T, Y)) * dm;
+      }
+      return { total, n, rhoC, tC, le };
+    };
+
+    // Bisect on log R. Smaller R means hotter centre means far more burning,
+    // so nuclear output is steeply decreasing in R.
+    let lo = Math.log(1e8), hi = Math.log(1e14);
+    for (let i = 0; i < 60; i++) {
+      const mid = 0.5 * (lo + hi);
+      if (nuclear(Math.exp(mid)).total > lTarget) lo = mid; else hi = mid;
+    }
+    const R = Math.exp(0.5 * (lo + hi));
+    const { n, rhoC, tC, le } = nuclear(R);
+
+    const rho = new Float64Array(shells);
+    const T = new Float64Array(shells);
+    const m = new Float64Array(shells);
+    for (let i = 0; i < shells; i++) {
+      const mFrac = (i + 0.5) / shells;
+      const theta = Math.max(thetaAtMassFraction(le, mFrac), 0);
+      rho[i] = rhoC * Math.pow(theta, n);
+      T[i] = tC * theta;
+      m[i] = mFrac * M;
+    }
+
+    const L = lTarget;
+    const tEff = Math.pow(L / (4 * Math.PI * R * R * SIGMA), 0.25);
+    return { R, rhoC, tC, n, L, tEff, rho, T, m };
+  }
+
+  return { laneEmden, eos, meanMolecularWeight, epsPP, epsCNO, eps3a, burnShell, structure, CAL, G, K_B, M_U, A_RAD, SIGMA, M_SUN, R_SUN, L_SUN, YEAR };
 });

@@ -181,3 +181,69 @@ test('burnShell never burns more fuel than is present', () => {
   const { dComp } = LS.burnShell(1e3, 5e7, comp, 1e20);
   assert.ok(comp.H1 + dComp.H1 >= 0, `H1 went to ${comp.H1 + dComp.H1}`);
 });
+
+const SOLAR = { H1: 0.70, He4: 0.28, C12: 0.02 };
+
+test('structure: a 1 solar mass star has roughly solar radius', () => {
+  const s = LS.structure(LS.M_SUN, SOLAR);
+  const ratio = s.R / LS.R_SUN;
+  assert.ok(ratio > 0.4 && ratio < 2.5, `R/R_sun was ${ratio}`);
+});
+
+test('structure: a 1 solar mass star has a central temperature near 15 MK', () => {
+  const s = LS.structure(LS.M_SUN, SOLAR);
+  assert.ok(s.tC > 8e6 && s.tC < 3e7, `T_c was ${s.tC}`);
+});
+
+test('structure: a 1 solar mass star has a central density near 150 g/cm3', () => {
+  const s = LS.structure(LS.M_SUN, SOLAR);
+  assert.ok(s.rhoC > 30 && s.rhoC < 600, `rho_c was ${s.rhoC}`);
+});
+
+test('structure: luminosity follows roughly L ~ M^3.5 on the main sequence', () => {
+  const a = LS.structure(1 * LS.M_SUN, SOLAR);
+  const b = LS.structure(4 * LS.M_SUN, SOLAR);
+  const slope = Math.log(b.L / a.L) / Math.log(4);
+  assert.ok(slope > 2.5 && slope < 4.5, `mass-luminosity slope was ${slope}`);
+});
+
+test('structure: more massive stars are bigger and hotter', () => {
+  const a = LS.structure(1 * LS.M_SUN, SOLAR);
+  const b = LS.structure(10 * LS.M_SUN, SOLAR);
+  assert.ok(b.R > a.R, 'a 10 solar mass star should be larger');
+  assert.ok(b.tC > a.tC, 'a 10 solar mass star should be hotter at the centre');
+  assert.ok(b.tEff > a.tEff, 'a 10 solar mass star should have a hotter surface');
+});
+
+test('structure: profiles are finite, ordered and centrally condensed', () => {
+  const s = LS.structure(LS.M_SUN, SOLAR, 200);
+  assert.strictEqual(s.rho.length, 200);
+  assert.ok(s.rho instanceof Float64Array, 'profiles must be Float64Array');
+  for (let i = 0; i < s.rho.length; i++) {
+    assert.ok(Number.isFinite(s.rho[i]) && s.rho[i] >= 0, `rho[${i}] = ${s.rho[i]}`);
+    assert.ok(Number.isFinite(s.T[i]) && s.T[i] >= 0, `T[${i}] = ${s.T[i]}`);
+  }
+  assert.ok(s.rho[0] > s.rho[s.rho.length - 1], 'density should fall outward');
+  assert.ok(s.T[0] > s.T[s.T.length - 1], 'temperature should fall outward');
+});
+
+test('structure: effective temperature satisfies the Stefan-Boltzmann relation', () => {
+  const s = LS.structure(LS.M_SUN, SOLAR);
+  const check = 4 * Math.PI * s.R * s.R * LS.SIGMA * Math.pow(s.tEff, 4);
+  assert.ok(Math.abs(check - s.L) / s.L < 1e-6, 'L and tEff are inconsistent');
+});
+
+test('structure: raising mean molecular weight contracts and heats the star', () => {
+  // Hydrogen partly burned to helium: mu rises, so the star must contract.
+  const young = LS.structure(LS.M_SUN, { H1: 0.70, He4: 0.28, C12: 0.02 });
+  const old = LS.structure(LS.M_SUN, { H1: 0.35, He4: 0.63, C12: 0.02 });
+  assert.ok(old.tC > young.tC, 'central temperature should rise as mu rises');
+});
+
+test('structure: determinism — identical input gives identical output', () => {
+  const a = LS.structure(2 * LS.M_SUN, SOLAR);
+  const b = LS.structure(2 * LS.M_SUN, SOLAR);
+  assert.strictEqual(a.R, b.R);
+  assert.strictEqual(a.tC, b.tC);
+  assert.strictEqual(a.L, b.L);
+});
