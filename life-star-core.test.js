@@ -108,3 +108,76 @@ test('meanMolecularWeight: solar mix is close to 0.6', () => {
   const { mu } = LS.meanMolecularWeight({ H1: 0.70, He4: 0.28, C12: 0.02 });
   assert.ok(mu > 0.58 && mu < 0.64, `mu was ${mu}`);
 });
+
+// The whole "onion emerges from the physics" argument rests on the claim that
+// these rates have effective temperature exponents of about 4, 17 and 40.
+// Measure the exponent numerically rather than trusting the formula.
+function logSlope(fn, T) {
+  const d = 1e-4;
+  return (Math.log(fn(T * (1 + d))) - Math.log(fn(T * (1 - d)))) / (2 * d);
+}
+
+test('pp chain has an effective temperature exponent near 4 at 15 MK', () => {
+  const slope = logSlope((T) => LS.epsPP(100, T, 0.7), 1.5e7);
+  assert.ok(slope > 3.4 && slope < 4.6, `slope was ${slope}`);
+});
+
+test('CNO cycle has an effective temperature exponent near 17 at 25 MK', () => {
+  const slope = logSlope((T) => LS.epsCNO(100, T, 0.7, 0.02), 2.5e7);
+  assert.ok(slope > 15 && slope < 19, `slope was ${slope}`);
+});
+
+test('triple-alpha has an effective temperature exponent near 40 at 100 MK', () => {
+  const slope = logSlope((T) => LS.eps3a(1e4, T, 1.0), 1e8);
+  assert.ok(slope > 37 && slope < 44, `slope was ${slope}`);
+});
+
+// The overflow guard. This is the assertion that fails if someone rewrites
+// the rates as power laws.
+test('rates stay finite and non-negative across the full temperature range', () => {
+  for (const T of [1e6, 1e7, 1e8, 5e8, 1e9, 5e9]) {
+    const pp = LS.epsPP(1e3, T, 0.7);
+    const cno = LS.epsCNO(1e3, T, 0.7, 0.02);
+    const he = LS.eps3a(1e5, T, 0.5);
+    for (const [name, v] of [['pp', pp], ['cno', cno], ['3a', he]]) {
+      assert.ok(Number.isFinite(v), `${name} not finite at T=${T}: ${v}`);
+      assert.ok(v >= 0, `${name} negative at T=${T}: ${v}`);
+    }
+  }
+});
+
+test('CNO overtakes pp at high temperature, pp dominates at low', () => {
+  const cool = 1.0e7, hot = 3.0e7;
+  assert.ok(LS.epsPP(100, cool, 0.7) > LS.epsCNO(100, cool, 0.7, 0.02),
+    'pp should dominate at 10 MK');
+  assert.ok(LS.epsCNO(100, hot, 0.7, 0.02) > LS.epsPP(100, hot, 0.7),
+    'CNO should dominate at 30 MK');
+});
+
+test('triple-alpha is negligible below its ignition temperature', () => {
+  assert.ok(LS.eps3a(1e4, 2e7, 1.0) < 1e-20, 'helium should not burn at 20 MK');
+  assert.ok(LS.eps3a(1e4, 1e8, 1.0) > 1e-3, 'helium should burn at 100 MK');
+});
+
+test('burnShell conserves total mass fraction', () => {
+  const comp = { H1: 0.7, He4: 0.28, C12: 0.02 };
+  const { dComp } = LS.burnShell(100, 1.5e7, comp, 1e10);
+  let sum = 0;
+  for (const k in dComp) sum += dComp[k];
+  assert.ok(Math.abs(sum) < 1e-12, `mass fractions changed by ${sum}`);
+});
+
+test('burnShell converts hydrogen to helium and releases energy', () => {
+  const comp = { H1: 0.7, He4: 0.28, C12: 0.02 };
+  const { energy, dComp } = LS.burnShell(100, 1.5e7, comp, 1e12);
+  assert.ok(dComp.H1 < 0, 'hydrogen should decrease');
+  assert.ok(dComp.He4 > 0, 'helium should increase');
+  assert.ok(energy > 0, 'energy should be released');
+});
+
+test('burnShell never burns more fuel than is present', () => {
+  const comp = { H1: 1e-6, He4: 0.999999 };
+  // A wildly long timestep at high temperature must not drive H1 negative.
+  const { dComp } = LS.burnShell(1e3, 5e7, comp, 1e20);
+  assert.ok(comp.H1 + dComp.H1 >= 0, `H1 went to ${comp.H1 + dComp.H1}`);
+});

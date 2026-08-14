@@ -33,6 +33,8 @@
   // M_U raised to the appropriate power.
   const K1 = 1.0036e13;           // dyn/cm^2 per (g/cm^3)^(5/3)
   const K2 = 1.2435e15;           // dyn/cm^2 per (g/cm^3)^(4/3)
+  const Q_H = 6.4e18;             // erg/g, hydrogen to helium (4 H1 -> He4)
+  const Q_HE = 5.84e17;           // erg/g, triple-alpha (3 He4 -> C12)
 
   const laneEmdenCache = new Map();
 
@@ -177,5 +179,72 @@
     return { P, pGas, pRad, pDeg, gamma1, n };
   }
 
-  return { laneEmden, eos, meanMolecularWeight, G, K_B, M_U, A_RAD, SIGMA, M_SUN, R_SUN, L_SUN, YEAR };
+  // Calibration multipliers. Published rate coefficients omit electron
+  // screening and are fitted over limited ranges; composing them with an
+  // approximate structure model does not land on the solar luminosity by
+  // itself. Tuned once in the Task 5 integration test.
+  const CAL = { pp: 1.0, cno: 1.0, he: 1.0 };
+
+  /**
+   * Proton-proton chain, erg/g/s. Gamow-peak form, NOT a power law:
+   * evaluating T^4 style expressions overflows. The effective exponent
+   * near 15 MK is about 4, which is a property of this formula, not an
+   * instruction to implement it as such.
+   */
+  function epsPP(rho, T, X) {
+    if (T <= 0 || X <= 0) return 0;
+    const T6 = T / 1e6;
+    return CAL.pp * 2.4e4 * rho * X * X *
+      Math.pow(T6, -2 / 3) * Math.exp(-33.80 * Math.pow(T6, -1 / 3));
+  }
+
+  /** CNO cycle, erg/g/s. Effective exponent near 25 MK is about 17. */
+  function epsCNO(rho, T, X, Z) {
+    if (T <= 0 || X <= 0 || Z <= 0) return 0;
+    const T6 = T / 1e6;
+    return CAL.cno * 4.4e25 * rho * X * Z *
+      Math.pow(T6, -2 / 3) * Math.exp(-152.28 * Math.pow(T6, -1 / 3));
+  }
+
+  /** Triple-alpha, erg/g/s. Effective exponent near 100 MK is about 40. */
+  function eps3a(rho, T, Y) {
+    if (T <= 0 || Y <= 0) return 0;
+    const T8 = T / 1e8;
+    return CAL.he * 5.1e8 * rho * rho * Y * Y * Y *
+      Math.pow(T8, -3) * Math.exp(-44.027 / T8);
+  }
+
+  /**
+   * Burn one shell for dt seconds.
+   * Returns energy in erg/g and the change in each mass fraction.
+   * Fuel consumption is capped at what is actually present, so an
+   * over-long timestep degrades to "burned everything" rather than
+   * driving a mass fraction negative.
+   */
+  function burnShell(rho, T, comp, dt) {
+    const X = comp.H1 || 0;
+    const Y = comp.He4 || 0;
+    // Metallicity: everything that is not hydrogen or helium.
+    let Z = 0;
+    for (const k in SPECIES) {
+      if (k !== 'H1' && k !== 'He4') Z += comp[k] || 0;
+    }
+
+    const eH = epsPP(rho, T, X) + epsCNO(rho, T, X, Z);
+    const eHe = eps3a(rho, T, Y);
+
+    let dH = Math.min(eH * dt / Q_H, X);       // grams of H per gram, capped
+    let dHe = Math.min(eHe * dt / Q_HE, Y);    // grams of He per gram, capped
+
+    const energy = dH * Q_H + dHe * Q_HE;
+
+    const dComp = {
+      H1: -dH,
+      He4: dH - dHe,
+      C12: dHe,
+    };
+    return { energy, dComp };
+  }
+
+  return { laneEmden, eos, meanMolecularWeight, epsPP, epsCNO, eps3a, burnShell, CAL, G, K_B, M_U, A_RAD, SIGMA, M_SUN, R_SUN, L_SUN, YEAR };
 });
