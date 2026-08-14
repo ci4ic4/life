@@ -126,6 +126,15 @@
     Fe56: [56, 26],
   };
 
+  /** Metallicity: everything that is not hydrogen or helium (dimensionless). */
+  function metallicity(comp) {
+    let Z = 0;
+    for (const k in SPECIES) {
+      if (k !== 'H1' && k !== 'He4') Z += comp[k] || 0;
+    }
+    return Z;
+  }
+
   /**
    * Mean molecular weight and mean molecular weight per electron.
    * Input X is composition as mass fractions (dimensionless).
@@ -266,11 +275,7 @@
   function burnShell(rho, T, comp, dt) {
     const X = comp.H1 || 0;
     const Y = comp.He4 || 0;
-    // Metallicity: everything that is not hydrogen or helium.
-    let Z = 0;
-    for (const k in SPECIES) {
-      if (k !== 'H1' && k !== 'He4') Z += comp[k] || 0;
-    }
+    const Z = metallicity(comp);
 
     const eH = epsPP(rho, T, X) + epsCNO(rho, T, X, Z);
     const eHe = eps3a(rho, T, Y);
@@ -372,8 +377,7 @@
     const { mu, muE } = meanMolecularWeight(comp);
     const X = comp.H1 || 0;
     const Y = comp.He4 || 0;
-    let Z = 0;
-    for (const k in SPECIES) if (k !== 'H1' && k !== 'He4') Z += comp[k] || 0;
+    const Z = metallicity(comp);
 
     const lTarget = L_SUN * Math.pow(M / M_SUN, 3) * Math.pow(mu / 0.6, 4);
 
@@ -504,8 +508,7 @@
     for (let i = 0; i < state.shells; i++) {
       const c = state.comp[i];
       const X = c.H1 || 0, Y = c.He4 || 0;
-      let Z = 0;
-      for (const k in SPECIES) if (k !== 'H1' && k !== 'He4') Z += c[k] || 0;
+      const Z = metallicity(c);
       const rate = epsPP(s.rho[i], s.T[i], X) +
                    epsCNO(s.rho[i], s.T[i], X, Z) +
                    eps3a(s.rho[i], s.T[i], Y);
