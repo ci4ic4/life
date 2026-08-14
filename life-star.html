@@ -84,8 +84,17 @@
       <label for="yps">Years per second (<span id="ypsv">—</span>)</label>
       <!-- min=5 (1.0e5 yr/s), not lower: a timestep is ~2 Myr for a solar-mass
            star, so below ~1e5 yr/s the gap between steps runs multiple real
-           seconds and the display reads as frozen rather than just slow. -->
-      <input type="range" id="yps" min="5" max="9.5" step="0.1" value="7">
+           seconds and the display reads as frozen rather than just slow.
+           max=7.5 (3.16e7 yr/s), not higher: MAX_STEPS_PER_FRAME=4 is shared
+           across all four stars, so covering a span of simulated time costs
+           span * sum(1/dt_i) steps across the family. At 240 steps/second
+           (4 steps * 60fps) and the four stars' timesteps, the real ceiling
+           is about 2e7 yr/s -- past that the debt accumulator (see
+           simYearsDebt below) just cannot drain fast enough and the slider's
+           top decades were dead travel. This mirrors fix round 3, which
+           raised the MINIMUM for the same reason at the other end: nobody
+           had swept the maximum against the same constraint. -->
+      <input type="range" id="yps" min="5" max="7.5" step="0.1" value="7">
 
       <table id="readouts">
         <tr><td class="k">Mass</td><td class="v"><span id="rMass">—</span> M☉</td></tr>
