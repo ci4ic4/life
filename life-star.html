@@ -161,13 +161,13 @@ let selected = 1;                     // index shown in the cross-section (1 Msu
 // loop gives 3.15 ms/step. Against a 10 ms frame budget that supports
 // floor(10 / 3.15) = 3 steps; against a full 16.67 ms frame (60fps with zero
 // draw/readout cost) it supports 5. Landed on 4 for one star (Task 6).
-// The 10ms budget belongs to the FRAME, not to any one star, so with four
-// stars this is a total shared across all of them in the frame() loop below
-// (a `stepsThisFrame` counter every star's step loop draws from), not a
-// per-star allowance -- four stars each independently allowed 4 steps could
-// reach ~50ms in one frame, five times the budget this constant was
-// measured against. Kept at 4 total, matching the original single-star
-// derivation exactly regardless of how many of the four are due at once.
+// The 10ms budget belongs to the FRAME, not to any one star: frame() below
+// spends this many steps per frame total, one at a time, always on
+// whichever live star is currently furthest behind (see the laggard-first
+// loop there) -- not a per-star allowance. Four stars each independently
+// allowed 4 steps could reach ~50ms in one frame, five times the budget this
+// constant was measured against. Kept at 4 total, matching the original
+// single-star derivation regardless of how many of the four are due.
 const MAX_STEPS_PER_FRAME = 4;
 
 let yearsPerSecond = Math.pow(10, +$('yps').value);
@@ -184,35 +184,42 @@ let lastFrame = performance.now();
 // achieved-rate readout already reports for one star.
 let simYearsDebt = FAMILY.map(() => 0);
 
-// ---- achieved-rate tracking (for the selected star only) ----------------
+// ---- achieved-rate tracking ------------------------------------------
 // The requested years-per-second is not always what the guard above can
-// deliver (dt granularity varies by star and by age). The readout must show
-// what is actually happening for whichever star is on screen, not the
+// deliver. The readout must show what is actually happening, not the
 // request. Rolling window over real age advanced vs wall-clock time; reset
-// whenever the run is interrupted or the selection changes, so a stale
-// sample from a different star/before a break doesn't skew it.
-let rateSamples = []; // {t: performance.now(), age: star.age seconds}
+// whenever the run is interrupted or (for the selected-star tracker) the
+// selection changes, so a stale sample doesn't skew it. One tracker for the
+// star on screen, a second for the family clock (now that the laggard-first
+// scheduler below keeps the live stars in lockstep, "how fast is Elapsed
+// itself advancing" is a real, single-valued measurement).
 const RATE_WINDOW_MS = 1500;
 
-function resetRateTracking() { rateSamples = []; }
-
-function trackRate(now) {
-  rateSamples.push({ t: now, age: stars[selected].age });
-  // Keep at least 2 samples always, even if the real frame gap exceeds the
-  // window -- pruning down to 1 would make achievedYearsPerSecond() return
-  // null forever, silently falling back to the requested-rate display this
-  // exists to replace. Only drop the oldest sample when a third, still-recent
-  // one is available to take its place.
-  while (rateSamples.length > 2 && now - rateSamples[1].t > RATE_WINDOW_MS) rateSamples.shift();
+function makeRateTracker(getAgeSeconds) {
+  let samples = [];
+  return {
+    reset() { samples = []; },
+    track(now) {
+      samples.push({ t: now, age: getAgeSeconds() });
+      // Keep at least 2 samples always, even if the real frame gap exceeds
+      // the window -- pruning to 1 would make achieved() return null
+      // forever, silently falling back to the requested-rate display this
+      // exists to replace. Only drop the oldest when a third, still-recent
+      // one is available to take its place.
+      while (samples.length > 2 && now - samples[1].t > RATE_WINDOW_MS) samples.shift();
+    },
+    achieved() {
+      if (samples.length < 2) return null;
+      const first = samples[0], last = samples[samples.length - 1];
+      const dtSec = (last.t - first.t) / 1000;
+      if (dtSec < 0.3) return null;
+      return (last.age - first.age) / LifeStar.YEAR / dtSec;
+    },
+  };
 }
 
-function achievedYearsPerSecond() {
-  if (rateSamples.length < 2) return null;
-  const first = rateSamples[0], last = rateSamples[rateSamples.length - 1];
-  const dtSec = (last.t - first.t) / 1000;
-  if (dtSec < 0.3) return null;
-  return (last.age - first.age) / LifeStar.YEAR / dtSec;
-}
+const selectedRate = makeRateTracker(() => stars[selected].age);
+const familyRate = makeRateTracker(() => Math.max(...stars.map((s) => s.age)));
 
 const ctx = $('crossSection').getContext('2d');
 const hrCtx = $('hr').getContext('2d');
@@ -368,7 +375,7 @@ function buildFamilyRow() {
     b.addEventListener('click', () => {
       if (selected === i) return;
       selected = i;
-      resetRateTracking();
+      selectedRate.reset();
       buildFamilyRow();
     });
     row.appendChild(b);
@@ -416,7 +423,7 @@ function updateReadouts(state, achieved) {
   $('aliveRow').classList.toggle('dead', !state.alive);
 }
 
-function updateFamilyReadouts() {
+function updateFamilyReadouts(achievedFamily) {
   // Elapsed is a MEASUREMENT of the stars, not an input to them: the max
   // age actually reached across the family. A separately-accumulated
   // "requested time" counter drifts from what the stars really did whenever
@@ -426,7 +433,23 @@ function updateFamilyReadouts() {
   // state.age instead makes drift impossible by construction.
   const elapsedYears = Math.max(...stars.map((s) => s.age)) / LifeStar.YEAR;
   $('fAge').textContent = formatAge(elapsedYears);
-  $('fRate').textContent = formatRate(yearsPerSecond) + (running ? '' : ' (paused)');
+
+  if (stars.every((s) => !s.alive)) {
+    $('fRate').textContent = 'frozen — entire family is dead';
+  } else if (!running) {
+    $('fRate').textContent = formatRate(yearsPerSecond) + ' (paused)';
+  } else if (achievedFamily === null) {
+    $('fRate').textContent = formatRate(yearsPerSecond);
+  } else {
+    // Now that the laggard-first scheduler (see frame()) keeps every live
+    // star within about one timestep of the others, "how fast is Elapsed
+    // itself advancing" is one real number, not an average of four
+    // different rates -- show it the same way the selected-star rate does.
+    const capped = achievedFamily < yearsPerSecond / 1.5;
+    $('fRate').innerHTML = capped
+      ? `${formatRate(achievedFamily)} <span style="color:#e0a04a">(requested ${formatRate(yearsPerSecond)} — capped)</span>`
+      : formatRate(achievedFamily);
+  }
 
   const table = $('familyTable');
   table.innerHTML = '';
@@ -450,41 +473,51 @@ function frame(now) {
   lastFrame = now;
   if (running) {
     const deltaYears = yearsPerSecond * elapsedSeconds;
-    // Shared across all four stars: the 10ms frame budget belongs to the
-    // frame, not to each star individually, so the step count that drains
-    // it must be shared too. Was a per-star cap (four stars x 4 steps could
-    // reach ~50ms in one frame); now the same MAX_STEPS_PER_FRAME=4 total
-    // this constant was originally derived against for a single star.
-    let stepsThisFrame = 0;
 
+    // Every live star banks the same increment -- that's what makes the
+    // clock shared -- capped at a few dt's worth so a paused tab or a slow
+    // frame can't bank a burst and discharge it all at once.
     stars.forEach((star, i) => {
       if (!star.alive) return;
       simYearsDebt[i] += deltaYears;
-
-      // Cap the debt at a few dt's worth so a paused tab, a slow frame, or a
-      // background gap can't bank a huge amount of simulated time and then
-      // discharge it in one burst once stepping resumes.
       const lastDtYears = star.dt / LifeStar.YEAR;
       if (lastDtYears > 0) simYearsDebt[i] = Math.min(simYearsDebt[i], lastDtYears * 3);
-
-      // Step only while this star's own debt covers a step's cost, with the
-      // shared per-frame budget as the hard ceiling.
-      while (stepsThisFrame < MAX_STEPS_PER_FRAME) {
-        if (star.dt > 0 && simYearsDebt[i] < star.dt / LifeStar.YEAR) break;
-        LifeStar.step(star);
-        stepsThisFrame++;
-        simYearsDebt[i] -= star.dt / LifeStar.YEAR;
-        if (!star.alive) break;
-      }
-      recordTrack(i);
     });
 
-    trackRate(now);
+    // Spend the shared per-frame step budget on whichever LIVE star is
+    // furthest behind (smallest age) each time, not divided evenly across
+    // the four and not in array order. Their dt's differ by more than an
+    // order of magnitude (25 Msun ~135 kyr vs 1 Msun ~2 Myr), so an even
+    // split lets the coarse-dt star fall permanently behind -- which is
+    // exactly what "one shared clock" must not do. Always picking the
+    // global minimum age keeps every live star within about one of its own
+    // timesteps of the others. Consequence, deliberate: the clock can only
+    // advance as fast as the slowest-to-step live star -- a clock that
+    // outran its slowest member would be the same class of bug the Elapsed
+    // fix (deriving it from max age) just closed. Dead stars are excluded
+    // from the search -- a frozen star would otherwise hold the minimum
+    // forever and starve the living -- but Elapsed (below) still uses the
+    // max over ALL stars, so it keeps advancing past each death.
+    for (let stepsThisFrame = 0; stepsThisFrame < MAX_STEPS_PER_FRAME; stepsThisFrame++) {
+      let laggard = -1;
+      stars.forEach((star, i) => {
+        if (!star.alive) return;
+        if (star.dt > 0 && simYearsDebt[i] < star.dt / LifeStar.YEAR) return; // can't afford a step yet
+        if (laggard === -1 || star.age < stars[laggard].age) laggard = i;
+      });
+      if (laggard === -1) break; // no live star can afford a step this frame
+      LifeStar.step(stars[laggard]);
+      simYearsDebt[laggard] -= stars[laggard].dt / LifeStar.YEAR;
+      recordTrack(laggard);
+    }
+
+    selectedRate.track(now);
+    familyRate.track(now);
   }
   drawCrossSection(ctx, stars[selected]);
   drawHR(hrCtx, stars, tracks);
-  updateReadouts(stars[selected], achievedYearsPerSecond());
-  updateFamilyReadouts();
+  updateReadouts(stars[selected], selectedRate.achieved());
+  updateFamilyReadouts(familyRate.achieved());
   requestAnimationFrame(frame);
 }
 
@@ -493,7 +526,8 @@ $('play').addEventListener('click', () => {
   running = !running;
   $('play').textContent = running ? '⏸ Pause' : '▶ Play';
   lastFrame = performance.now();
-  resetRateTracking();
+  selectedRate.reset();
+  familyRate.reset();
 });
 $('yps').addEventListener('input', () => {
   yearsPerSecond = Math.pow(10, +$('yps').value);
