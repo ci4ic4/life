@@ -33,8 +33,14 @@
   // M_U raised to the appropriate power.
   const K1 = 1.0036e13;           // dyn/cm^2 per (g/cm^3)^(5/3)
   const K2 = 1.2435e15;           // dyn/cm^2 per (g/cm^3)^(4/3)
-  const Q_H = 6.4e18;             // erg/g, hydrogen to helium (4 H1 -> He4)
-  const Q_HE = 5.84e17;           // erg/g, triple-alpha (3 He4 -> C12)
+  // Q-values from nuclear mass defects:
+  // Q_H: 4 H1 -> He4 releases 26.73 MeV (mass defect 0.028697 u).
+  //      Per gram of H1 fuel: 26.73 MeV / (4 u * 931.494 MeV/u) * c^2 = 0.00712 c^2.
+  //      The rounded "0.007 c^2" yields 6.3e18 erg/g; the unrounded is 6.40e18.
+  // Q_HE: 3 He4 -> C12 releases 7.275 MeV (mass defect 0.007809 u).
+  //       Per gram of He4 fuel: 7.275 MeV / (3 * 4 u * 931.494 MeV/u) * c^2 = 5.84e17 erg/g.
+  const Q_H = 6.4e18;             // erg/g, hydrogen to helium
+  const Q_HE = 5.84e17;           // erg/g, triple-alpha
 
   const laneEmdenCache = new Map();
 
@@ -216,7 +222,7 @@
 
   /**
    * Burn one shell for dt seconds.
-   * Returns energy in erg/g and the change in each mass fraction.
+   * Returns energy in erg/g and the change in each mass fraction (dimensionless).
    * Fuel consumption is capped at what is actually present, so an
    * over-long timestep degrades to "burned everything" rather than
    * driving a mass fraction negative.
