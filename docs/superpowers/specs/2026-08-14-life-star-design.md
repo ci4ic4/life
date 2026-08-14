@@ -288,6 +288,35 @@ the physics legible, because the main sequence, the giant branch and the white
 dwarf cooling track all appear as shapes an observer can recognise from any
 astronomy book.
 
+### Mass family
+
+Several stars run at once — 0.5, 1, 8 and 25 M☉ by default — tracing separate
+tracks across the same HR diagram to different endpoints. The cross-section
+panel shows whichever star is selected.
+
+**This costs nothing in the core.** `step(state, dt)` stays strictly
+single-star; the shell holds an array of independent star states and steps each
+one. No core API changes, no shared mutable state between stars. That is the
+whole reason this belongs in slice 1 rather than a later retrofit — it
+constrains the shell's state model from the beginning, and getting that shape
+right at the start is far cheaper than reworking it around a single-star
+assumption baked in earlier.
+
+**The stars share one physical clock, not a normalised one.** This is the
+decision the feature turns on. A 25 M☉ star lives about 7 Myr and a 1 M☉ star
+about 10 Gyr — a factor of 1400. Normalising so every star finishes together
+would make the display tidy and would destroy the entire lesson, which is that
+massive stars live fast and die young. So real shared time it is: the massive
+stars die early and sit as corpses while the small ones are still burning
+hydrogen, exactly as in reality.
+
+**The time axis is therefore logarithmic**, which is what makes shared real time
+readable at all. On a log axis 7 Myr and 10 Gyr are three decades apart and both
+clearly visible; on a linear axis the massive star's entire life is the first
+0.07% of the run and invisible. The log axis is not a presentational nicety
+here — it is what makes the honest choice of clock survive contact with a
+screen.
+
 ## Help dialog — "looks broken, isn't"
 
 Per the suite's convention, findings a reader would otherwise mistake for bugs
@@ -336,7 +365,9 @@ are the two pieces everything else depends on.
 
 - Convective mixing and dredge-up. Shells are Lagrangian and never exchange
   material. This is the largest omission and it is why the onion layers will be
-  cleaner than a real star's.
+  cleaner than a real star's. **Deferred for later evaluation, not rejected** —
+  it is the simplification an astronomer would notice first, and the one most
+  worth revisiting once the rest works.
 - Opacity tables. No radiative transfer; the effective temperature comes from a
   simple surface condition.
 - Mass loss by stellar wind, except as a scripted envelope-loss event.
@@ -346,10 +377,9 @@ are the two pieces everything else depends on.
 - A Rust port. The suite's Rust workspace covers the CA family and ecology;
   extending it to `life-star` is a separate decision, not implied by this spec.
 
-## Open question for slicing
+## Slicing note
 
-Whether the mass-family comparison — several masses racing across one HR diagram
-to different endpoints — lands as a later slice. It is the best demonstration of
-the mass-endpoint relationship and turns the page into something closer to the
-stability search in `life-stochastic`, but it is meaningfully more UI and state
-to manage. Deferred, not rejected.
+The mass-family comparison is **in slice 1**, not deferred. It is the direct
+demonstration of goal #2 — mass decides everything — and the argument for
+building it early is that it costs nothing in the core and constrains the shell's
+state model, which is far cheaper to get right at the start than to retrofit.
