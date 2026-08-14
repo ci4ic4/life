@@ -161,6 +161,11 @@ const TRACK_COLOUR = ['#5ad0a0', '#4a9ee0', '#e0c34a', '#e0554a'];
 
 let stars = FAMILY.map((m) => LifeStar.createStar(m, { shells: 200 }));
 let tracks = FAMILY.map(() => []);   // per star: [{ tEff, L }], perceptible moves only
+// Largest radius each star has EVER reached, in solar radii. Monotonically
+// increasing by construction (see recordTrack) -- the cross-section scales
+// against this, not the star's current radius, so growth is visible as the
+// disc actually growing rather than the log axis renormalising every frame.
+let maxRSolar = stars.map((s) => s.struct.R / LifeStar.R_SUN);
 let selected = 1;                     // index shown in the cross-section (1 Msun default)
 
 // ---- render-loop pacing -----------------------------------------------
@@ -241,7 +246,7 @@ function dominantColour(comp) {
   return SPECIES_COLOUR[best] || '#888';
 }
 
-function drawCrossSection(ctx, state) {
+function drawCrossSection(ctx, state, maxRSolarSeen) {
   const W = ctx.canvas.width, H = ctx.canvas.height;
   ctx.fillStyle = '#0d0a06';
   ctx.fillRect(0, 0, W, H);
@@ -249,8 +254,11 @@ function drawCrossSection(ctx, state) {
   const cx = W / 2, cy = H / 2, maxPx = Math.min(W, H) / 2 - 10;
   const s = state.struct;
   // Log radius: the star spans orders of magnitude across its life, and
-  // a linear axis makes every interesting change invisible.
-  const rMaxSolar = Math.max(s.R / LifeStar.R_SUN, 1) * 1.2;
+  // a linear axis makes every interesting change invisible. Scaled against
+  // the largest radius ever seen, not the current one -- else the disc
+  // renormalises to fill the canvas every frame and radius change (the
+  // whole reason for the log axis) is invisible.
+  const rMaxSolar = Math.max(maxRSolarSeen, 1) * 1.2;
   const scale = (rSolar) =>
     maxPx * Math.log1p(rSolar) / Math.log1p(rMaxSolar);
 
@@ -369,6 +377,8 @@ function recordTrack(i) {
                Math.abs(Math.log(s.tEff / last.tEff)) > 0.005) {
     track.push({ tEff: s.tEff, L: s.L });
   }
+  const rSolar = s.R / LifeStar.R_SUN;
+  if (rSolar > maxRSolar[i]) maxRSolar[i] = rSolar;
 }
 
 // ---- family selector ------------------------------------------------------
@@ -533,7 +543,7 @@ function frame(now) {
     selectedRate.track(now);
     familyRate.track(now);
   }
-  drawCrossSection(ctx, stars[selected]);
+  drawCrossSection(ctx, stars[selected], maxRSolar[selected]);
   drawHR(hrCtx, stars, tracks);
   updateReadouts(stars[selected], selectedRate.achieved());
   updateFamilyReadouts(familyRate.achieved());
