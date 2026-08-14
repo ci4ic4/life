@@ -294,7 +294,7 @@ function hrPy(H, L) {
              (Math.log10(L_HI) - Math.log10(L_LO));
 }
 
-function drawHRGrid(ctx, px, py, tHot, tCool, lLo, lHi) {
+function drawHRGrid(ctx, px, py, lLo, lHi) {
   const W = ctx.canvas.width, H = ctx.canvas.height;
   ctx.strokeStyle = '#232b35';
   ctx.lineWidth = 1;
@@ -336,7 +336,7 @@ function drawHR(ctx, stars, tracks) {
   const px = (tEff) => hrPx(W, tEff);
   const py = (L) => hrPy(H, L);
 
-  drawHRGrid(ctx, px, py, T_HOT, T_COOL, L_LO, L_HI);
+  drawHRGrid(ctx, px, py, L_LO, L_HI);
 
   tracks.forEach((track, i) => {
     if (track.length < 2) return;
