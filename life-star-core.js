@@ -297,6 +297,13 @@
       tC = temperatureFor(rhoC, pC, mu, muE);
       n = eos(rhoC, tC, mu, muE).n;
     }
+    // le and n must agree: without this re-solve, le was computed for the
+    // PREVIOUS n (this iteration's eos() call updates n only afterwards), so
+    // the returned le and n described different polytropes. structure()
+    // builds its mass table from le.n but its density profile from n -- two
+    // different indices for one star, up to 0.025 apart by construction
+    // (~11% density error in the outer shells where theta is small).
+    le = laneEmden(n);
     return { n, rhoC, tC, le };
   }
 
@@ -362,7 +369,10 @@
       for (let i = 0; i < shells; i++) {
         const mFrac = (i + 0.5) / shells;
         const theta = thetaAtMassFraction(le, mFrac);
-        const rho = rhoC * Math.pow(Math.max(theta, 0), n);
+        // le.n, not n: they agree after centralState's re-solve, but le.n is
+        // the single index the mass table (thetaAtMassFraction) was also
+        // built from -- use it here so there is exactly one index in play.
+        const rho = rhoC * Math.pow(Math.max(theta, 0), le.n);
         const T = tC * Math.max(theta, 0);
         total += (epsPP(rho, T, X) + epsCNO(rho, T, X, Z) + eps3a(rho, T, Y)) * dm;
       }
@@ -385,7 +395,7 @@
     for (let i = 0; i < shells; i++) {
       const mFrac = (i + 0.5) / shells;
       const theta = Math.max(thetaAtMassFraction(le, mFrac), 0);
-      rho[i] = rhoC * Math.pow(theta, n);
+      rho[i] = rhoC * Math.pow(theta, le.n);
       T[i] = tC * theta;
       m[i] = mFrac * M;
     }
