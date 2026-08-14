@@ -49,3 +49,55 @@ test('laneEmden profile is finite everywhere and monotonically decreasing', () =
 test('laneEmden memoises: same n returns the identical object', () => {
   assert.strictEqual(LS.laneEmden(3), LS.laneEmden(3));
 });
+
+test('eos: ideal-gas-dominated matter gives gamma1 = 5/3 and n = 1.5', () => {
+  // Low density, moderate temperature: gas dominates over radiation and
+  // degeneracy by many orders of magnitude.
+  const r = LS.eos(1.0, 1e7, 0.6, 2.0);
+  assert.ok(Math.abs(r.gamma1 - 5 / 3) < 0.01, `gamma1 was ${r.gamma1}`);
+  assert.ok(Math.abs(r.n - 1.5) < 0.02, `n was ${r.n}`);
+});
+
+test('eos: radiation-dominated matter gives gamma1 = 4/3 and n = 3', () => {
+  // Very low density, very high temperature.
+  const r = LS.eos(1e-4, 1e9, 0.6, 2.0);
+  assert.ok(r.pRad > 100 * r.pGas, 'test setup wrong: radiation should dominate');
+  assert.ok(Math.abs(r.gamma1 - 4 / 3) < 0.02, `gamma1 was ${r.gamma1}`);
+  assert.ok(Math.abs(r.n - 3) < 0.1, `n was ${r.n}`);
+});
+
+test('eos: cold moderately dense matter is non-relativistically degenerate', () => {
+  const r = LS.eos(1e5, 1e5, 1.4, 2.0);
+  assert.ok(r.pDeg > 100 * r.pGas, 'test setup wrong: degeneracy should dominate');
+  assert.ok(Math.abs(r.gamma1 - 5 / 3) < 0.05, `gamma1 was ${r.gamma1}`);
+});
+
+test('eos: cold very dense matter is relativistically degenerate', () => {
+  const r = LS.eos(1e9, 1e5, 1.4, 2.0);
+  assert.ok(r.pDeg > 100 * r.pGas, 'test setup wrong: degeneracy should dominate');
+  assert.ok(Math.abs(r.gamma1 - 4 / 3) < 0.05, `gamma1 was ${r.gamma1}`);
+});
+
+test('eos: n is clamped into [1.0, 3.4]', () => {
+  for (const [rho, T] of [[1e-8, 1e9], [1e10, 1e4], [1, 1e7], [1e6, 1e8]]) {
+    const r = LS.eos(rho, T, 0.6, 2.0);
+    assert.ok(r.n >= 1.0 && r.n <= 3.4, `n was ${r.n} at rho=${rho} T=${T}`);
+  }
+});
+
+test('meanMolecularWeight: pure ionised hydrogen gives mu = 0.5, muE = 1', () => {
+  const { mu, muE } = LS.meanMolecularWeight({ H1: 1 });
+  assert.ok(Math.abs(mu - 0.5) < 1e-6, `mu was ${mu}`);
+  assert.ok(Math.abs(muE - 1.0) < 1e-6, `muE was ${muE}`);
+});
+
+test('meanMolecularWeight: pure ionised helium gives mu = 4/3, muE = 2', () => {
+  const { mu, muE } = LS.meanMolecularWeight({ He4: 1 });
+  assert.ok(Math.abs(mu - 4 / 3) < 1e-6, `mu was ${mu}`);
+  assert.ok(Math.abs(muE - 2.0) < 1e-6, `muE was ${muE}`);
+});
+
+test('meanMolecularWeight: solar mix is close to 0.6', () => {
+  const { mu } = LS.meanMolecularWeight({ H1: 0.70, He4: 0.28, C12: 0.02 });
+  assert.ok(mu > 0.58 && mu < 0.64, `mu was ${mu}`);
+});

@@ -25,6 +25,15 @@
   const L_SUN = 3.828e33;         // erg/s
   const YEAR = 31557600;          // s
 
+  // Degenerate electron pressure coefficients (Chandrasekhar formula).
+  // K1 * (rho/muE)^(5/3) gives non-relativistic pressure.
+  // K2 * (rho/muE)^(4/3) gives relativistic pressure.
+  // Values computed from quantum mechanics: ℏ^2/(5*m_e) and ℏ*c/4,
+  // scaled by (3π^2)^(2/3) and (3π^2)^(1/3) respectively, divided by
+  // M_U raised to the appropriate power.
+  const K1 = 1.0036e13;           // dyn/cm^2 per (g/cm^3)^(5/3)
+  const K2 = 1.2435e15;           // dyn/cm^2 per (g/cm^3)^(4/3)
+
   const laneEmdenCache = new Map();
 
   /**
@@ -96,5 +105,66 @@
     return result;
   }
 
-  return { laneEmden, G, K_B, M_U, A_RAD, SIGMA, M_SUN, R_SUN, L_SUN, YEAR };
+  // (A, Z) per species. Fully ionised throughout — these stars have no
+  // neutral zone worth modelling.
+  const SPECIES = {
+    H1:   [1, 1],
+    He4:  [4, 2],
+    C12:  [12, 6],
+    O16:  [16, 8],
+    Ne20: [20, 10],
+    Mg24: [24, 12],
+    Si28: [28, 14],
+    Fe56: [56, 26],
+  };
+
+  /** Mean molecular weight and mean molecular weight per electron. */
+  function meanMolecularWeight(X) {
+    let invMu = 0, invMuE = 0;
+    for (const key in SPECIES) {
+      const frac = X[key] || 0;
+      if (frac <= 0) continue;
+      const [A, Z] = SPECIES[key];
+      invMu += frac * (1 + Z) / A;
+      invMuE += frac * Z / A;
+    }
+    return {
+      mu: invMu > 0 ? 1 / invMu : 1e9,
+      muE: invMuE > 0 ? 1 / invMuE : 1e9,
+    };
+  }
+
+  /**
+   * Total pressure and the adiabatic index at (rho, T).
+   * rho g/cm^3, T K. Returns P in dyn/cm^2.
+   *
+   * gamma1 is the ADIABATIC exponent, not the isothermal one. The isothermal
+   * d lnP / d ln rho for an ideal gas is 1, which would give n = infinity.
+   */
+  function eos(rho, T, mu, muE) {
+    const pGas = rho * K_B * T / (mu * M_U);
+    const pRad = A_RAD * T * T * T * T / 3;
+
+    const pNr = K1 * Math.pow(rho / muE, 5 / 3);
+    const pRel = K2 * Math.pow(rho / muE, 4 / 3);
+    // ponytail: harmonic blend of the two degeneracy limits. Correct in both
+    // limits and crosses over at the right density (~2e6 g/cm^3). Upgrade to
+    // the exact parametric Fermi integral only if the white-dwarf mass-radius
+    // relation is ever measured against rather than eyeballed.
+    const pDeg = (pNr * pRel) / (pNr + pRel);
+
+    const P = pGas + pRad + pDeg;
+
+    const f = pNr / (pNr + pRel);
+    const gammaDeg = (5 / 3) * (1 - f) + (4 / 3) * f;
+    const gamma1 = (pGas * (5 / 3) + pRad * (4 / 3) + pDeg * gammaDeg) / P;
+
+    let n = 1 / (gamma1 - 1);
+    if (!Number.isFinite(n) || n > 3.4) n = 3.4;
+    if (n < 1.0) n = 1.0;
+
+    return { P, pGas, pRad, pDeg, gamma1, n };
+  }
+
+  return { laneEmden, eos, meanMolecularWeight, G, K_B, M_U, A_RAD, SIGMA, M_SUN, R_SUN, L_SUN, YEAR };
 });
