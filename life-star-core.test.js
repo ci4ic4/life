@@ -233,11 +233,40 @@ test('structure: effective temperature satisfies the Stefan-Boltzmann relation',
   assert.ok(Math.abs(check - s.L) / s.L < 1e-6, 'L and tEff are inconsistent');
 });
 
-test('structure: raising mean molecular weight contracts and heats the star', () => {
-  // Hydrogen partly burned to helium: mu rises, so the star must contract.
+test('structure: raising mean molecular weight heats the star', () => {
+  // Hydrogen partly burned to helium: mu rises, so at fixed rho_c and P_c
+  // the ideal-gas relation T = P*mu/(rho*k) makes the core hotter directly.
+  //
+  // NOT asserting R falls here: measured at LS.M_SUN with these two
+  // compositions, R actually rises slightly (0.474 -> 0.497 R_sun) rather
+  // than falling, because the mu-driven core heating alone (~1.37x, before
+  // any radius change) already outruns the ~3.5x rise in L_target given how
+  // steeply nuclear output responds to T at this T_c, while X^2 in the fuel
+  // term drops 4x (0.35^2/0.7^2) — net a wash, resolved by a small radius
+  // increase rather than the contraction naive homology intuition predicts.
+  // Checked at 0.5 solar masses too: there R does fall (0.330 -> 0.291
+  // R_sun), so the direction is mass-dependent in this toy model, not a bug.
+  // See the fix-round-2 report for the numbers.
   const young = LS.structure(LS.M_SUN, { H1: 0.70, He4: 0.28, C12: 0.02 });
   const old = LS.structure(LS.M_SUN, { H1: 0.35, He4: 0.63, C12: 0.02 });
   assert.ok(old.tC > young.tC, 'central temperature should rise as mu rises');
+});
+
+// Nothing else checks that the bisection actually converged: the L ~ M^3
+// slope test is arithmetic on a closed-form expression and would pass even
+// if nuclear() and centralState() were broken, and the Stefan-Boltzmann
+// test is tautological once L is derived from tEff. This is the test that
+// would catch a star with no radius at which nuclear output can match the
+// homology target — e.g. once its hydrogen is exhausted, the bisection
+// silently runs to a bracket endpoint and returns a nonsense star with
+// nothing thrown. Task 5 handles exhaustion explicitly; this guards the
+// healthy main-sequence case.
+test('structure: converged luminosity matches the homology target within 1%', () => {
+  const s = LS.structure(LS.M_SUN, SOLAR);
+  const { mu } = LS.meanMolecularWeight(SOLAR);
+  const target = LS.L_SUN * Math.pow(LS.M_SUN / LS.M_SUN, 3) * Math.pow(mu / 0.6, 4);
+  const rel = Math.abs(s.L - target) / target;
+  assert.ok(rel < 0.01, `relative difference was ${rel}`);
 });
 
 test('structure: determinism — identical input gives identical output', () => {

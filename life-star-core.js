@@ -377,7 +377,7 @@
       if (nuclear(Math.exp(mid)).total > lTarget) lo = mid; else hi = mid;
     }
     const R = Math.exp(0.5 * (lo + hi));
-    const { n, rhoC, tC, le } = nuclear(R);
+    const { total, n, rhoC, tC, le } = nuclear(R);
 
     const rho = new Float64Array(shells);
     const T = new Float64Array(shells);
@@ -390,7 +390,9 @@
       m[i] = mFrac * M;
     }
 
-    const L = lTarget;
+    // Measured, not assumed: the integrated nuclear output at the converged
+    // radius, which should equal lTarget to within bisection precision.
+    const L = total;
     const tEff = Math.pow(L / (4 * Math.PI * R * R * SIGMA), 0.25);
     return { R, rhoC, tC, n, L, tEff, rho, T, m };
   }
