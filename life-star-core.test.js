@@ -320,6 +320,15 @@ test('dt is capped by the fastest-burning shell, not a global average', () => {
 
 // The headline calibration checks. Both brackets are a factor of ~2, which
 // is the honest accuracy of this model.
+//
+// The measured value here (24.2 Gyr) sits close to the 25 Gyr ceiling, so a
+// change to shell count or other options could push it over. That's expected,
+// not a sign CAL needs adjusting: this model's n=1.5 convective structure is
+// less centrally condensed than a real star, so cores run cooler and
+// lifetimes come out roughly 2x long. CAL.pp is deliberately left at 1.0
+// rather than tuned to compensate -- slice 2's structural fix changes what
+// calibration is even needed, so it should happen once against the corrected
+// structure, not twice.
 test('a 1 solar mass star lives roughly 10 Gyr on the main sequence', () => {
   const s = LS.createStar(1, { shells: 100 });
   let guard = 0;
@@ -375,4 +384,29 @@ test('a 1 solar mass star eventually goes dead with a finite, sensible struct', 
   assert.ok(Number.isFinite(s.struct.R) && s.struct.R > 0, `R was ${s.struct.R}`);
   assert.ok(Number.isFinite(s.struct.L) && s.struct.L > 0, `L was ${s.struct.L}`);
   assert.ok(Number.isFinite(s.struct.tC) && s.struct.tC > 0, `tC was ${s.struct.tC}`);
+});
+
+// The freeze order matters, not just the frozen values: once hydrogen is
+// exhausted there is no radius at which nuclear output can match the
+// required luminosity, so a re-solve at that point returns a bracket-endpoint
+// star that is finite, positive, and wrong. Finiteness checks (the test
+// above) cannot tell that apart from a correctly-frozen struct -- only
+// object identity can, because a recomputed struct would be a new object
+// even if its numbers happened to look similar. This test steps up to the
+// transition, captures struct, then asserts identity survives the step that
+// flips alive to false.
+test('struct is frozen by reference across the death transition, not recomputed', () => {
+  const s = LS.createStar(1, { shells: 50 });
+  let guard = 0;
+  let structBefore;
+  // Capture struct right before each step; when that step is the one that
+  // flips alive to false, structBefore is exactly the pre-transition struct.
+  do {
+    structBefore = s.struct;
+    LS.step(s);
+  } while (s.alive && guard++ < 200000);
+
+  assert.strictEqual(s.alive, false, 'guard exhausted before the star died');
+  assert.strictEqual(s.struct, structBefore, 'struct must be the same object, not re-solved');
+  assert.strictEqual(s.struct.R, structBefore.R);
 });
