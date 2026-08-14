@@ -133,6 +133,17 @@ let yearsPerSecond = Math.pow(10, +$('yps').value);
 let running = true;
 let lastFrame = performance.now();
 
+// Simulated years "owed" to the star, discharged as whole dt-sized steps.
+// LifeStar.step's dt is coarse (a flat 2e6 yr for a 1 Msun star's whole main
+// sequence) -- coarser than a frame's budget at most slider positions. Taking
+// at least one step per frame regardless would make the floor (dt * 60fps)
+// the effective minimum rate no matter how low the slider is set. Banking
+// the request as debt and only stepping once it covers a step's cost fixes
+// that: below the floor, most frames pass without stepping and the star
+// advances at the requested rate; at or above the floor, behaviour is
+// unchanged from a plain per-frame step loop.
+let simYearsDebt = 0;
+
 // ---- achieved-rate tracking ---------------------------------------------
 // The requested years-per-second is not always what the guard above can
 // deliver (early main-sequence dt is ~1e4-1e6 yr/step, so MAX_STEPS_PER_FRAME
@@ -243,16 +254,28 @@ function frame(now) {
   const elapsedSeconds = (now - lastFrame) / 1000;
   lastFrame = now;
   if (running && star.alive) {
-    const targetYears = yearsPerSecond * elapsedSeconds;
-    let advanced = 0;
-    // Step until this frame's worth of simulated time is used up, with a
-    // hard iteration cap (MAX_STEPS_PER_FRAME, see derivation above) so a
-    // tiny dt cannot freeze the browser. A dead star is skipped entirely --
-    // step() on it is a documented no-op, but there is no reason to pay
-    // even that cost every frame once the readouts already show it frozen.
-    for (let guard = 0; advanced < targetYears * LifeStar.YEAR && guard < MAX_STEPS_PER_FRAME; guard++) {
+    simYearsDebt += yearsPerSecond * elapsedSeconds;
+
+    // Cap the debt at a few dt's worth so a paused tab, a slow frame, or a
+    // background gap can't bank a huge amount of simulated time and then
+    // discharge it in one burst once stepping resumes. Uses the last known
+    // dt (see below) as the yardstick; before the very first step ever
+    // taken there is no yardstick yet, so nothing to cap.
+    const lastDtYears = star.dt / LifeStar.YEAR;
+    if (lastDtYears > 0) simYearsDebt = Math.min(simYearsDebt, lastDtYears * 3);
+
+    // Step only while the debt actually covers a step's cost, with a hard
+    // iteration cap (MAX_STEPS_PER_FRAME, see derivation above) so a run
+    // that's way above the floor still can't freeze the browser. dt is only
+    // known after step() runs, so the gate tests the LAST known dt (it moves
+    // slowly frame to frame) and the actual dt consumed is subtracted
+    // afterwards -- self-correcting if dt drifts. A dead star is skipped
+    // entirely -- step() on it is a documented no-op, but there is no reason
+    // to pay even that cost once the readouts already show it frozen.
+    for (let guard = 0; guard < MAX_STEPS_PER_FRAME; guard++) {
+      if (star.dt > 0 && simYearsDebt < star.dt / LifeStar.YEAR) break;
       LifeStar.step(star);
-      advanced += star.dt;
+      simYearsDebt -= star.dt / LifeStar.YEAR;
       if (!star.alive) break;
     }
   }
@@ -266,12 +289,14 @@ function frame(now) {
 $('mass').addEventListener('change', () => {
   star = LifeStar.createStar(+$('mass').value, { shells: 200 });
   lastFrame = performance.now();
+  simYearsDebt = 0;
   resetRateTracking();
 });
 $('play').addEventListener('click', () => {
   running = !running;
   $('play').textContent = running ? '⏸ Pause' : '▶ Play';
   lastFrame = performance.now();
+  simYearsDebt = 0;
   resetRateTracking();
 });
 $('yps').addEventListener('input', () => {
