@@ -484,6 +484,16 @@ function frame(now) {
       if (lastDtYears > 0) simYearsDebt[i] = Math.min(simYearsDebt[i], lastDtYears * 3);
     });
 
+    // Measured spread between live stars' ages: 0.58-0.96 timesteps under
+    // continuous 60fps playback, but up to ~6 timesteps for a few frames
+    // after a long real-time gap (tab switch, throttling) -- the cap above
+    // limits how much debt one gap can inject, and laggard-first stepping
+    // (below) spends the next several frames' budget closing the gap back
+    // down. This is a bounded, self-correcting transient, NOT the round-1
+    // bug: that Elapsed accumulator grew the gap monotonically forever with
+    // no mechanism pulling it back. A wide spread that shrinks over the
+    // following frames is this; a wide spread that keeps growing is that.
+
     // Spend the shared per-frame step budget on whichever LIVE star is
     // furthest behind (smallest age) each time, not divided evenly across
     // the four and not in array order. Their dt's differ by more than an
