@@ -8,37 +8,50 @@
           --fg:#cdd6e0; --mute:#8a96a6; --blue:#7fb0ff; --green:#7fd18c; --amber:#ffd479; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.4 system-ui,sans-serif; }
-  .wrap { max-width:900px; margin:0 auto; padding:28px 20px 48px; }
+  .wrap { max-width:960px; margin:0 auto; padding:28px 20px 48px; }
   h1 { margin:0 0 4px; font-size:22px; font-weight:600; letter-spacing:-.2px; }
-  .lede { margin:0 0 20px; color:var(--mute); max-width:70ch; }
+  h2 { margin:30px 0 4px; font-size:17px; font-weight:600; }
+  .lede { margin:0 0 20px; color:var(--mute); max-width:74ch; }
 
   .stage { display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap; }
-  #crossSection { background:#0d0a06; border:1px solid var(--line); border-radius:8px; flex:none; }
+  #crossSection, #hr { background:#0d0a06; border:1px solid var(--line); border-radius:8px; flex:none; }
 
-  #panel { flex:1; min-width:260px; background:var(--card); border:1px solid var(--line);
+  #panel, #hrPanel { flex:1; min-width:260px; background:var(--card); border:1px solid var(--line);
            border-radius:9px; padding:14px 16px; }
 
   /* The main sequence is ~90% of a star's life and visually static for billions
      of years. This banner is the thing that tells an observer the page has not
      hung -- it is deliberately the most prominent readout on the page. */
-  #clock { margin:0 0 12px; padding-bottom:10px; border-bottom:1px solid var(--line); }
-  #clock .age { font-size:20px; font-weight:700; color:var(--green); }
-  #clock .rate { color:var(--mute); font-size:12px; margin-top:2px; }
-  #clock .rate b { color:var(--amber); }
+  #clock, #familyClock { margin:0 0 12px; padding-bottom:10px; border-bottom:1px solid var(--line); }
+  #clock .age, #familyClock .age { font-size:20px; font-weight:700; color:var(--green); }
+  #clock .rate, #familyClock .rate { color:var(--mute); font-size:12px; margin-top:2px; }
+  #clock .rate b, #familyClock .rate b { color:var(--amber); }
   #clock .hint { color:#5a6a7a; font-size:11px; margin-top:3px; }
 
-  label { display:block; margin:9px 0 3px; color:var(--mute); font-size:11px; }
-  select, input[type=range] { width:100%; background:#0e1218; color:var(--fg);
-        border:1px solid var(--edge); border-radius:5px; padding:4px; box-sizing:border-box; }
-  button { background:#222c39; color:var(--fg); border:1px solid var(--edge); border-radius:5px;
-        padding:6px 10px; cursor:pointer; font-size:12px; width:100%; margin-top:9px; }
-  button:hover { background:#2c3a49; }
+  /* Family selector: one swatch per star, coloured to match its HR track so
+     the cross-section, the HR dot and the per-star row are all identifiable
+     by the same colour without a separate legend. */
+  .family { display:flex; gap:8px; margin:0 0 16px; }
+  .family button { flex:1; padding:9px 4px; border-radius:6px; border:2px solid transparent;
+        cursor:pointer; font-size:12.5px; font-weight:700; color:#0a0c10; }
+  .family button.active { border-color:#fff; }
 
-  table#readouts { width:100%; border-collapse:collapse; margin-top:14px; font-size:12.5px; }
+  label { display:block; margin:9px 0 3px; color:var(--mute); font-size:11px; }
+  input[type=range] { width:100%; background:#0e1218; color:var(--fg);
+        border:1px solid var(--edge); border-radius:5px; padding:4px; box-sizing:border-box; }
+  button.play { background:#222c39; color:var(--fg); border:1px solid var(--edge); border-radius:5px;
+        padding:6px 10px; cursor:pointer; font-size:12px; width:100%; margin-top:9px; }
+  button.play:hover { background:#2c3a49; }
+
+  table#readouts, table#familyTable { width:100%; border-collapse:collapse; margin-top:14px; font-size:12.5px; }
   table#readouts td { padding:3px 0; }
   table#readouts td.k { color:var(--mute); }
   table#readouts td.v { text-align:right; color:var(--fg); font-variant-numeric:tabular-nums; }
-  table#readouts tr.dead td { color:#e0554a; }
+  table#readouts tr.dead td, table#familyTable tr.dead td { color:#e0554a; }
+  table#familyTable td { padding:4px 3px; }
+  table#familyTable td.sw { width:14px; }
+  table#familyTable span.dot { display:inline-block; width:10px; height:10px; border-radius:50%; }
+  table#familyTable td.num { text-align:right; font-variant-numeric:tabular-nums; }
 
   footer { margin-top:24px; color:#5a6a7a; font-size:12px; }
   footer a { color:#7a8798; }
@@ -46,34 +59,27 @@
 
 <div class="wrap">
   <h1>Stellar Evolution — Cross-Section</h1>
-  <p class="lede">A single star's interior, modelled shell by shell: Lane-Emden structure,
-  proton-proton and CNO burning, adaptive timesteps. Not a cellular automaton — one star,
-  evolving under real (if simplified) stellar physics. Radius is drawn on a log scale because
-  a star's radius changes by orders of magnitude over its life.</p>
+  <p class="lede">Four stars — 0.5, 1, 8 and 25 solar masses — modelled shell by shell:
+  Lane-Emden structure, proton-proton and CNO burning, adaptive timesteps. All four run on
+  the <em>same</em> real physical clock, not a normalised one, which is why the massive star
+  finishes its life in millions of years while the smallest is barely underway. Pick a star
+  below to see its cross-section; the Hertzsprung-Russell diagram further down tracks all
+  four at once.</p>
+
+  <div class="family" id="familyRow"></div>
 
   <div class="stage">
     <canvas id="crossSection" width="480" height="480"></canvas>
 
     <div id="panel">
       <div id="clock">
-        <div class="age">Age <span id="rAge">0 yr</span></div>
+        <div class="age">Age (selected star) <span id="rAge">0 yr</span></div>
         <div class="rate">Rate <b id="rRate">—</b></div>
         <div class="hint">The main sequence is ~90% of a star's life and looks static for
         billions of years. If the disc isn't moving, watch the age tick instead.</div>
       </div>
 
-      <label for="mass">Mass</label>
-      <select id="mass">
-        <option value="0.5">0.5 M☉</option>
-        <option value="1" selected>1 M☉</option>
-        <option value="2">2 M☉</option>
-        <option value="5">5 M☉</option>
-        <option value="8">8 M☉</option>
-        <option value="15">15 M☉</option>
-        <option value="25">25 M☉</option>
-      </select>
-
-      <button id="play">⏸ Pause</button>
+      <button class="play" id="play">⏸ Pause</button>
 
       <label for="yps">Years per second (<span id="ypsv">—</span>)</label>
       <!-- min=5 (1.0e5 yr/s), not lower: a timestep is ~2 Myr for a solar-mass
@@ -82,6 +88,7 @@
       <input type="range" id="yps" min="5" max="9.5" step="0.1" value="7">
 
       <table id="readouts">
+        <tr><td class="k">Mass</td><td class="v"><span id="rMass">—</span> M☉</td></tr>
         <tr><td class="k">Radius</td><td class="v"><span id="rRadius">—</span> R☉</td></tr>
         <tr><td class="k">Central temperature</td><td class="v"><span id="rTc">—</span> MK</td></tr>
         <tr><td class="k">Central density</td><td class="v"><span id="rRhoc">—</span> g/cm³</td></tr>
@@ -90,6 +97,26 @@
         <tr><td class="k">Phase</td><td class="v"><span id="rPhase">—</span></td></tr>
         <tr id="aliveRow"><td class="k">Alive</td><td class="v"><span id="rAlive">—</span></td></tr>
       </table>
+    </div>
+  </div>
+
+  <h2>Hertzsprung-Russell diagram</h2>
+  <p class="lede">Effective temperature against luminosity, drawn the conventional way:
+  temperature increases to the left, both axes logarithmic. The four dots landing on a
+  single diagonal band as they evolve <em>is</em> the model's own main sequence — nothing
+  is drawn to suggest it is there beforehand. (This model's Sun runs hotter than the real
+  one for reasons noted in the project's design docs; the four tracks are self-consistent
+  with each other, which is what the diagram is checking.)</p>
+
+  <div class="stage">
+    <canvas id="hr" width="560" height="460"></canvas>
+
+    <div id="hrPanel">
+      <div id="familyClock">
+        <div class="age">Elapsed <span id="fAge">0 yr</span></div>
+        <div class="rate">Rate <b id="fRate">—</b></div>
+      </div>
+      <table id="familyTable"></table>
     </div>
   </div>
 
@@ -114,65 +141,76 @@ const SPECIES_COLOUR = {
   Fe56: '#c04a4a',   // red
 };
 
+// ---- the family ---------------------------------------------------------
+// A 25 Msun star lives ~15.9 Myr in this model; a 1 Msun star lives ~23 Gyr --
+// a factor of ~1400. They are NOT normalised to finish together: each one
+// advances to the same physical simYears, so the massive stars finish early
+// and sit as frozen corpses while the small ones are still on the main
+// sequence. That asymmetry is the entire point of the panel.
+const FAMILY = [0.5, 1, 8, 25];
+const TRACK_COLOUR = ['#5ad0a0', '#4a9ee0', '#e0c34a', '#e0554a'];
+
+let stars = FAMILY.map((m) => LifeStar.createStar(m, { shells: 200 }));
+let tracks = FAMILY.map(() => []);   // per star: [{ tEff, L }], perceptible moves only
+let selected = 1;                     // index shown in the cross-section (1 Msun default)
+
 // ---- render-loop pacing -----------------------------------------------
 // LifeStar.step() re-solves structure(): a 60-step bisection with a
 // 200-shell sum inside every iteration (80% of the per-step cost lives in
-// that bisection). Earlier measurement in this file used 8 ms/step, taken
-// from a Chrome tab whose document.visibilityState was "hidden" (a
-// backgrounded automation tab gets clock-throttled) -- that number was
-// flagged as suspect and has been replaced. A clean Node (V8) benchmark of
-// LifeStar.step in a tight loop gives 3.15 ms/step. Against a 10 ms frame
-// budget that supports floor(10 / 3.15) = 3 steps; against a full 16.67 ms
-// frame (60fps with zero draw/readout cost) it supports 5. Split the
-// difference at 4 rather than chasing the slider's top end -- the honest
-// fix for "the slider requests more than the guard can deliver" is the
-// achieved-rate readout below, not a looser guard that risks dropped frames.
-const FRAME_BUDGET_MS = 10;
-const MEASURED_MS_PER_STEP = 3.15;
+// that bisection). A clean Node (V8) benchmark of LifeStar.step in a tight
+// loop gives 3.15 ms/step. Against a 10 ms frame budget that supports
+// floor(10 / 3.15) = 3 steps; against a full 16.67 ms frame (60fps with zero
+// draw/readout cost) it supports 5. Landed on 4 for one star (Task 6) and it
+// is NOT raised here even though there are now four stars: the debt
+// accumulator below means most frames step zero or one of the four (their
+// dt's differ by orders of magnitude, so they rarely all come due at once),
+// and a hard per-star cap of 4 bounds the true worst case -- all four due in
+// the same frame -- at 16 steps, which is the honest price of an occasional
+// slow frame rather than a reason to loosen the guard everywhere else.
 const MAX_STEPS_PER_FRAME = 4;
 
-let star = LifeStar.createStar(1, { shells: 200 });
 let yearsPerSecond = Math.pow(10, +$('yps').value);
 let running = true;
 let lastFrame = performance.now();
 
-// Simulated years "owed" to the star, discharged as whole dt-sized steps.
-// LifeStar.step's dt is coarse (a flat 2e6 yr for a 1 Msun star's whole main
-// sequence) -- coarser than a frame's budget at most slider positions. Taking
-// at least one step per frame regardless would make the floor (dt * 60fps)
-// the effective minimum rate no matter how low the slider is set. Banking
-// the request as debt and only stepping once it covers a step's cost fixes
-// that: below the floor, most frames pass without stepping and the star
-// advances at the requested rate; at or above the floor, behaviour is
-// unchanged from a plain per-frame step loop.
-let simYearsDebt = 0;
+// Simulated years "owed" to EACH star, discharged as whole dt-sized steps.
+// This is Task 6's single-star debt accumulator, extended to one slot per
+// star rather than reverted to a single "always step once" loop. Every star
+// receives the identical yearsPerSecond*elapsedSeconds increment each frame
+// -- that identical increment is what makes the physical clock shared: a
+// star that can't keep up (dt too coarse for MAX_STEPS_PER_FRAME to drain
+// its own debt) simply falls behind the requested rate, exactly as the
+// achieved-rate readout already reports for one star.
+let simYearsDebt = FAMILY.map(() => 0);
 
-// ---- achieved-rate tracking ---------------------------------------------
+// The nominal shared clock: what all four stars are advancing toward. Purely
+// a display figure (Elapsed, below) -- each star's own state.age is the
+// thing that actually gates its physics and can trail this by up to a
+// couple of its own dt's if it's rate-limited.
+let simYears = 0;
+
+// ---- achieved-rate tracking (for the selected star only) ----------------
 // The requested years-per-second is not always what the guard above can
-// deliver (early main-sequence dt is ~1e4-1e6 yr/step, so MAX_STEPS_PER_FRAME
-// caps throughput well below the slider's top end). The readout must show
-// what is actually happening, not the request, or a capped run silently
-// misreports its own progress. Rolling window over real age advanced vs
-// wall-clock time; reset whenever the run is interrupted (mass swap, pause,
-// resume) so a stale sample from before the break doesn't skew it.
+// deliver (dt granularity varies by star and by age). The readout must show
+// what is actually happening for whichever star is on screen, not the
+// request. Rolling window over real age advanced vs wall-clock time; reset
+// whenever the run is interrupted or the selection changes, so a stale
+// sample from a different star/before a break doesn't skew it.
 let rateSamples = []; // {t: performance.now(), age: star.age seconds}
 const RATE_WINDOW_MS = 1500;
 
 function resetRateTracking() { rateSamples = []; }
 
 function trackRate(now) {
-  rateSamples.push({ t: now, age: star.age });
+  rateSamples.push({ t: now, age: stars[selected].age });
   // Keep at least 2 samples always, even if the real frame gap exceeds the
-  // window (a slow/throttled tab can easily take longer than RATE_WINDOW_MS
-  // between frames) -- pruning down to 1 would make achievedYearsPerSecond()
-  // return null forever, silently falling back to the requested-rate display
-  // this fix exists to replace. Only drop the oldest sample when a third,
-  // still-recent one is available to take its place.
+  // window -- pruning down to 1 would make achievedYearsPerSecond() return
+  // null forever, silently falling back to the requested-rate display this
+  // exists to replace. Only drop the oldest sample when a third, still-recent
+  // one is available to take its place.
   while (rateSamples.length > 2 && now - rateSamples[1].t > RATE_WINDOW_MS) rateSamples.shift();
 }
 
-// null until the window has enough span to be meaningful, so the readout
-// doesn't flash a bogus near-zero rate for the first fraction of a second.
 function achievedYearsPerSecond() {
   if (rateSamples.length < 2) return null;
   const first = rateSamples[0], last = rateSamples[rateSamples.length - 1];
@@ -182,6 +220,7 @@ function achievedYearsPerSecond() {
 }
 
 const ctx = $('crossSection').getContext('2d');
+const hrCtx = $('hr').getContext('2d');
 
 function dominantColour(comp) {
   let best = 'H1', bestVal = -1;
@@ -214,6 +253,133 @@ function drawCrossSection(ctx, state) {
   }
 }
 
+// ---- HR diagram -----------------------------------------------------------
+// Conventional axes only: temperature increases LEFTWARD, both log, no
+// reference/observed main-sequence band. This model's 1 Msun star lands at
+// ~8600 K (an A-type slot) rather than the real Sun's 5772 K, because its
+// radius comes out smaller than the real Sun's -- forced by Stefan-Boltzmann
+// given the model's luminosity. Overlaying a real main sequence would show
+// the sim visibly contradicting a printed reference for a reason that has
+// nothing to do with a bug. The four tracks are self-consistent with each
+// other and form the model's own main sequence -- that's what this diagram
+// is for.
+const T_HOT = 40000, T_COOL = 2000;
+const L_LO = 1e-4, L_HI = 1e6;
+
+function hrPx(W, tEff) {
+  return W * (Math.log10(T_HOT) - Math.log10(tEff)) /
+             (Math.log10(T_HOT) - Math.log10(T_COOL));
+}
+function hrPy(H, L) {
+  return H * (Math.log10(L_HI) - Math.log10(L / LifeStar.L_SUN)) /
+             (Math.log10(L_HI) - Math.log10(L_LO));
+}
+
+function drawHRGrid(ctx, px, py, tHot, tCool, lLo, lHi) {
+  const W = ctx.canvas.width, H = ctx.canvas.height;
+  ctx.strokeStyle = '#232b35';
+  ctx.lineWidth = 1;
+  ctx.fillStyle = '#7a8697';
+  ctx.font = '10px system-ui,sans-serif';
+
+  // Temperature gridlines: the conventional spectral-boundary-ish ticks.
+  [40000, 20000, 10000, 5000, 3000].forEach((t) => {
+    const x = px(t);
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, H);
+    ctx.stroke();
+    ctx.textAlign = 'center';
+    ctx.fillText(t.toLocaleString() + 'K', x, H - 4);
+  });
+
+  // Luminosity gridlines: one per decade from lLo to lHi (in Lsun).
+  ctx.textAlign = 'left';
+  const expLo = Math.round(Math.log10(lLo)), expHi = Math.round(Math.log10(lHi));
+  for (let exp = expLo; exp <= expHi; exp++) {
+    const y = py(Math.pow(10, exp) * LifeStar.L_SUN);
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+    ctx.fillText('1e' + exp + ' L☉', 4, y - 3);
+  }
+
+  ctx.textAlign = 'right';
+  ctx.fillText('← hotter', W - 4, 12);
+}
+
+function drawHR(ctx, stars, tracks) {
+  const W = ctx.canvas.width, H = ctx.canvas.height;
+  ctx.fillStyle = '#0d0a06';
+  ctx.fillRect(0, 0, W, H);
+
+  const px = (tEff) => hrPx(W, tEff);
+  const py = (L) => hrPy(H, L);
+
+  drawHRGrid(ctx, px, py, T_HOT, T_COOL, L_LO, L_HI);
+
+  tracks.forEach((track, i) => {
+    if (track.length < 2) return;
+    ctx.strokeStyle = TRACK_COLOUR[i];
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(px(track[0].tEff), py(track[0].L));
+    for (let k = 1; k < track.length; k++) {
+      ctx.lineTo(px(track[k].tEff), py(track[k].L));
+    }
+    ctx.stroke();
+  });
+
+  // Current position as a filled dot, ringed if this star is selected.
+  stars.forEach((star, i) => {
+    const s = star.struct;
+    const x = px(s.tEff), y = py(s.L);
+    ctx.fillStyle = TRACK_COLOUR[i];
+    ctx.beginPath();
+    ctx.arc(x, y, i === selected ? 6 : 4, 0, Math.PI * 2);
+    ctx.fill();
+    if (i === selected) {
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  });
+}
+
+// Record a track point only when the star has moved perceptibly in log
+// space -- without this the arrays grow to tens of thousands of points over
+// a solar lifetime (11,474 steps for 1 Msun alone) and the redraw slows down.
+function recordTrack(i) {
+  const s = stars[i].struct;
+  const track = tracks[i];
+  const last = track[track.length - 1];
+  if (!last || Math.abs(Math.log(s.L / last.L)) > 0.01 ||
+               Math.abs(Math.log(s.tEff / last.tEff)) > 0.005) {
+    track.push({ tEff: s.tEff, L: s.L });
+  }
+}
+
+// ---- family selector ------------------------------------------------------
+function buildFamilyRow() {
+  const row = $('familyRow');
+  row.innerHTML = '';
+  FAMILY.forEach((m, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = m + ' M☉';
+    b.style.background = TRACK_COLOUR[i];
+    b.className = i === selected ? 'active' : '';
+    b.addEventListener('click', () => {
+      if (selected === i) return;
+      selected = i;
+      resetRateTracking();
+      buildFamilyRow();
+    });
+    row.appendChild(b);
+  });
+}
+
 // ---- readouts -----------------------------------------------------------
 function formatAge(years) {
   if (years < 1e3) return years.toFixed(0) + ' yr';
@@ -229,7 +395,9 @@ function formatRate(yps) {
 function updateReadouts(state, achieved) {
   const s = state.struct;
   $('rAge').textContent = formatAge(state.age / LifeStar.YEAR);
-  if (!running) {
+  if (!state.alive) {
+    $('rRate').textContent = 'frozen — selected star is dead';
+  } else if (!running) {
     $('rRate').textContent = formatRate(yearsPerSecond) + ' (paused)';
   } else if (achieved === null) {
     $('rRate').textContent = formatRate(yearsPerSecond);
@@ -242,6 +410,7 @@ function updateReadouts(state, achieved) {
       ? `${formatRate(achieved)} <span style="color:#e0a04a">(requested ${formatRate(yearsPerSecond)} — capped)</span>`
       : formatRate(achieved);
   }
+  $('rMass').textContent = FAMILY[selected];
   $('rRadius').textContent = (s.R / LifeStar.R_SUN).toFixed(3);
   $('rTc').textContent = (s.tC / 1e6).toFixed(2);
   $('rRhoc').textContent = s.rhoC.toExponential(2);
@@ -252,54 +421,70 @@ function updateReadouts(state, achieved) {
   $('aliveRow').classList.toggle('dead', !state.alive);
 }
 
+function updateFamilyReadouts() {
+  $('fAge').textContent = formatAge(simYears);
+  $('fRate').textContent = formatRate(yearsPerSecond) + (running ? '' : ' (paused)');
+
+  const table = $('familyTable');
+  table.innerHTML = '';
+  FAMILY.forEach((m, i) => {
+    const st = stars[i];
+    const tr = document.createElement('tr');
+    if (!st.alive) tr.classList.add('dead');
+    tr.innerHTML =
+      `<td class="sw"><span class="dot" style="background:${TRACK_COLOUR[i]}"></span></td>` +
+      `<td>${m} M☉</td>` +
+      `<td class="num">${formatAge(st.age / LifeStar.YEAR)}</td>` +
+      `<td>${st.phase}</td>` +
+      `<td>${st.alive ? '' : 'dead'}</td>`;
+    table.appendChild(tr);
+  });
+}
+
 // ---- render loop ----------------------------------------------------------
 function frame(now) {
   const elapsedSeconds = (now - lastFrame) / 1000;
   lastFrame = now;
-  if (running && star.alive) {
-    simYearsDebt += yearsPerSecond * elapsedSeconds;
+  if (running) {
+    const deltaYears = yearsPerSecond * elapsedSeconds;
+    simYears += deltaYears;
 
-    // Cap the debt at a few dt's worth so a paused tab, a slow frame, or a
-    // background gap can't bank a huge amount of simulated time and then
-    // discharge it in one burst once stepping resumes. Uses the last known
-    // dt (see below) as the yardstick; before the very first step ever
-    // taken there is no yardstick yet, so nothing to cap.
-    const lastDtYears = star.dt / LifeStar.YEAR;
-    if (lastDtYears > 0) simYearsDebt = Math.min(simYearsDebt, lastDtYears * 3);
+    stars.forEach((star, i) => {
+      if (!star.alive) return;
+      simYearsDebt[i] += deltaYears;
 
-    // Step only while the debt actually covers a step's cost, with a hard
-    // iteration cap (MAX_STEPS_PER_FRAME, see derivation above) so a run
-    // that's way above the floor still can't freeze the browser. dt is only
-    // known after step() runs, so the gate tests the LAST known dt (it moves
-    // slowly frame to frame) and the actual dt consumed is subtracted
-    // afterwards -- self-correcting if dt drifts. A dead star is skipped
-    // entirely -- step() on it is a documented no-op, but there is no reason
-    // to pay even that cost once the readouts already show it frozen.
-    for (let guard = 0; guard < MAX_STEPS_PER_FRAME; guard++) {
-      if (star.dt > 0 && simYearsDebt < star.dt / LifeStar.YEAR) break;
-      LifeStar.step(star);
-      simYearsDebt -= star.dt / LifeStar.YEAR;
-      if (!star.alive) break;
-    }
+      // Cap the debt at a few dt's worth so a paused tab, a slow frame, or a
+      // background gap can't bank a huge amount of simulated time and then
+      // discharge it in one burst once stepping resumes.
+      const lastDtYears = star.dt / LifeStar.YEAR;
+      if (lastDtYears > 0) simYearsDebt[i] = Math.min(simYearsDebt[i], lastDtYears * 3);
+
+      // Step only while this star's own debt covers a step's cost, with a
+      // hard per-star iteration cap so four stars due in the same frame still
+      // can't freeze the browser.
+      for (let guard = 0; guard < MAX_STEPS_PER_FRAME; guard++) {
+        if (star.dt > 0 && simYearsDebt[i] < star.dt / LifeStar.YEAR) break;
+        LifeStar.step(star);
+        simYearsDebt[i] -= star.dt / LifeStar.YEAR;
+        if (!star.alive) break;
+      }
+      recordTrack(i);
+    });
+
+    trackRate(now);
   }
-  if (running) trackRate(now);
-  drawCrossSection(ctx, star);
-  updateReadouts(star, achievedYearsPerSecond());
+  drawCrossSection(ctx, stars[selected]);
+  drawHR(hrCtx, stars, tracks);
+  updateReadouts(stars[selected], achievedYearsPerSecond());
+  updateFamilyReadouts();
   requestAnimationFrame(frame);
 }
 
 // ---- wiring -----------------------------------------------------------
-$('mass').addEventListener('change', () => {
-  star = LifeStar.createStar(+$('mass').value, { shells: 200 });
-  lastFrame = performance.now();
-  simYearsDebt = 0;
-  resetRateTracking();
-});
 $('play').addEventListener('click', () => {
   running = !running;
   $('play').textContent = running ? '⏸ Pause' : '▶ Play';
   lastFrame = performance.now();
-  simYearsDebt = 0;
   resetRateTracking();
 });
 $('yps').addEventListener('input', () => {
@@ -308,5 +493,6 @@ $('yps').addEventListener('input', () => {
 });
 $('ypsv').textContent = formatRate(yearsPerSecond);
 
+buildFamilyRow();
 requestAnimationFrame(frame);
 </script>
