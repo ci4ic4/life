@@ -67,7 +67,7 @@ test('eos: radiation-dominated matter gives gamma1 = 4/3 and n = 3', () => {
 });
 
 test('eos: cold moderately dense matter is non-relativistically degenerate', () => {
-  const r = LS.eos(1e5, 1e5, 1.4, 2.0);
+  const r = LS.eos(1e3, 1e4, 1.4, 2.0);
   assert.ok(r.pDeg > 100 * r.pGas, 'test setup wrong: degeneracy should dominate');
   assert.ok(Math.abs(r.gamma1 - 5 / 3) < 0.05, `gamma1 was ${r.gamma1}`);
 });

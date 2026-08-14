@@ -148,9 +148,12 @@
     const pNr = K1 * Math.pow(rho / muE, 5 / 3);
     const pRel = K2 * Math.pow(rho / muE, 4 / 3);
     // ponytail: harmonic blend of the two degeneracy limits. Correct in both
-    // limits and crosses over at the right density (~2e6 g/cm^3). Upgrade to
-    // the exact parametric Fermi integral only if the white-dwarf mass-radius
-    // relation is ever measured against rather than eyeballed.
+    // limits and crosses over at the right density (~2e6 g/cm^3). Weakest point
+    // is the transition region: at x=p_F/(m_e c)=0.372 the blend gives gamma1=1.59
+    // whereas the exact Fermi integral gives ~1.64, but the fully relativistic limit
+    // (Chandrasekhar) is correct and unaffected. Upgrade to the exact parametric
+    // Fermi integral only if the white-dwarf mass-radius relation is ever measured
+    // against rather than eyeballed.
     const pDeg = (pNr * pRel) / (pNr + pRel);
 
     const P = pGas + pRad + pDeg;
