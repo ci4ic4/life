@@ -113,25 +113,59 @@ const SPECIES_COLOUR = {
 
 // ---- render-loop pacing -----------------------------------------------
 // LifeStar.step() re-solves structure(): a 60-step bisection with a
-// 200-shell sum inside every iteration. Measured directly (LifeStar.step in
-// a tight loop, JIT-warmed first): ~4.2 ms/step under plain Node (V8,
-// unthrottled) and ~8 ms/step in this Chrome instance. The two disagree
-// because Chrome throttles a backgrounded/non-visible tab's JS clock speed;
-// 8 ms is the number actually measured in the browser this page runs in, so
-// it is the one used here rather than the friendlier Node figure. A frame
-// budget of ~10 ms allows floor(10 / 8) = 1 step per frame. That is not a
-// bottleneck in practice: at 60fps that is still 60 steps/s, and each step's
-// dt is on the order of 1e6-1e8 simulated years, far more throughput than
-// the years-per-second slider below actually needs. Re-measure and
-// recompute this constant rather than guessing if the core's cost changes.
+// 200-shell sum inside every iteration (80% of the per-step cost lives in
+// that bisection). Earlier measurement in this file used 8 ms/step, taken
+// from a Chrome tab whose document.visibilityState was "hidden" (a
+// backgrounded automation tab gets clock-throttled) -- that number was
+// flagged as suspect and has been replaced. A clean Node (V8) benchmark of
+// LifeStar.step in a tight loop gives 3.15 ms/step. Against a 10 ms frame
+// budget that supports floor(10 / 3.15) = 3 steps; against a full 16.67 ms
+// frame (60fps with zero draw/readout cost) it supports 5. Split the
+// difference at 4 rather than chasing the slider's top end -- the honest
+// fix for "the slider requests more than the guard can deliver" is the
+// achieved-rate readout below, not a looser guard that risks dropped frames.
 const FRAME_BUDGET_MS = 10;
-const MEASURED_MS_PER_STEP = 8;
-const MAX_STEPS_PER_FRAME = Math.max(1, Math.floor(FRAME_BUDGET_MS / MEASURED_MS_PER_STEP));
+const MEASURED_MS_PER_STEP = 3.15;
+const MAX_STEPS_PER_FRAME = 4;
 
 let star = LifeStar.createStar(1, { shells: 200 });
 let yearsPerSecond = Math.pow(10, +$('yps').value);
 let running = true;
 let lastFrame = performance.now();
+
+// ---- achieved-rate tracking ---------------------------------------------
+// The requested years-per-second is not always what the guard above can
+// deliver (early main-sequence dt is ~1e4-1e6 yr/step, so MAX_STEPS_PER_FRAME
+// caps throughput well below the slider's top end). The readout must show
+// what is actually happening, not the request, or a capped run silently
+// misreports its own progress. Rolling window over real age advanced vs
+// wall-clock time; reset whenever the run is interrupted (mass swap, pause,
+// resume) so a stale sample from before the break doesn't skew it.
+let rateSamples = []; // {t: performance.now(), age: star.age seconds}
+const RATE_WINDOW_MS = 1500;
+
+function resetRateTracking() { rateSamples = []; }
+
+function trackRate(now) {
+  rateSamples.push({ t: now, age: star.age });
+  // Keep at least 2 samples always, even if the real frame gap exceeds the
+  // window (a slow/throttled tab can easily take longer than RATE_WINDOW_MS
+  // between frames) -- pruning down to 1 would make achievedYearsPerSecond()
+  // return null forever, silently falling back to the requested-rate display
+  // this fix exists to replace. Only drop the oldest sample when a third,
+  // still-recent one is available to take its place.
+  while (rateSamples.length > 2 && now - rateSamples[1].t > RATE_WINDOW_MS) rateSamples.shift();
+}
+
+// null until the window has enough span to be meaningful, so the readout
+// doesn't flash a bogus near-zero rate for the first fraction of a second.
+function achievedYearsPerSecond() {
+  if (rateSamples.length < 2) return null;
+  const first = rateSamples[0], last = rateSamples[rateSamples.length - 1];
+  const dtSec = (last.t - first.t) / 1000;
+  if (dtSec < 0.3) return null;
+  return (last.age - first.age) / LifeStar.YEAR / dtSec;
+}
 
 const ctx = $('crossSection').getContext('2d');
 
@@ -178,10 +212,22 @@ function formatRate(yps) {
   return yps.toExponential(1).replace('e+', 'e') + ' yr/s';
 }
 
-function updateReadouts(state) {
+function updateReadouts(state, achieved) {
   const s = state.struct;
   $('rAge').textContent = formatAge(state.age / LifeStar.YEAR);
-  $('rRate').textContent = running ? formatRate(yearsPerSecond) : formatRate(yearsPerSecond) + ' (paused)';
+  if (!running) {
+    $('rRate').textContent = formatRate(yearsPerSecond) + ' (paused)';
+  } else if (achieved === null) {
+    $('rRate').textContent = formatRate(yearsPerSecond);
+  } else {
+    // Show what is actually happening, not the request. When the guard caps
+    // throughput the achieved rate falls materially below the requested one
+    // -- flag that rather than let the readout overstate progress.
+    const capped = achieved < yearsPerSecond / 1.5;
+    $('rRate').innerHTML = capped
+      ? `${formatRate(achieved)} <span style="color:#e0a04a">(requested ${formatRate(yearsPerSecond)} — capped)</span>`
+      : formatRate(achieved);
+  }
   $('rRadius').textContent = (s.R / LifeStar.R_SUN).toFixed(3);
   $('rTc').textContent = (s.tC / 1e6).toFixed(2);
   $('rRhoc').textContent = s.rhoC.toExponential(2);
@@ -210,8 +256,9 @@ function frame(now) {
       if (!star.alive) break;
     }
   }
+  if (running) trackRate(now);
   drawCrossSection(ctx, star);
-  updateReadouts(star);
+  updateReadouts(star, achievedYearsPerSecond());
   requestAnimationFrame(frame);
 }
 
@@ -219,11 +266,13 @@ function frame(now) {
 $('mass').addEventListener('change', () => {
   star = LifeStar.createStar(+$('mass').value, { shells: 200 });
   lastFrame = performance.now();
+  resetRateTracking();
 });
 $('play').addEventListener('click', () => {
   running = !running;
   $('play').textContent = running ? '⏸ Pause' : '▶ Play';
   lastFrame = performance.now();
+  resetRateTracking();
 });
 $('yps').addEventListener('input', () => {
   yearsPerSecond = Math.pow(10, +$('yps').value);
