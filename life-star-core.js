@@ -424,7 +424,13 @@
     // radius, which should equal lTarget to within bisection precision.
     const L = total;
     const tEff = Math.pow(L / (4 * Math.PI * R * R * SIGMA), 0.25);
-    return { R, rhoC, tC, n, L, tEff, rho, T, m };
+    // Bisection has no radius at which nuclear output matches lTarget once
+    // hydrogen is exhausted (see step()'s freeze), and would otherwise
+    // silently hand back its bracket endpoint. Flag it here instead of
+    // hiding it; slice 2 should act on a false converged rather than just
+    // display it, this only makes the failure inspectable.
+    const converged = Math.abs(L - lTarget) / lTarget < 0.05;
+    return { R, rhoC, tC, n, L, tEff, rho, T, m, converged };
   }
 
   const PHASES = {
