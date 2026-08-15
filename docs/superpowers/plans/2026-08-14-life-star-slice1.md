@@ -51,8 +51,11 @@ const K1 = 1.0036e13;
 const K2 = 1.2435e15;
 
 // Nuclear energy release per gram of fuel consumed
-const Q_H  = 6.3e18;   // erg/g of hydrogen burned to helium (0.007 c^2)
-const Q_HE = 5.8e17;   // erg/g of helium burned to carbon
+// 26.73 MeV per four protons = 0.00712 of rest mass. The often-quoted "0.007
+// c^2" is that figure rounded, and gives 6.3e18; the derived value is used here.
+const Q_H  = 6.40e18;  // erg/g of hydrogen burned to helium
+// 7.275 MeV per carbon-12 nucleus formed from three alphas.
+const Q_HE = 5.84e17;  // erg/g of helium burned to carbon
 ```
 
 ---
@@ -466,10 +469,22 @@ git commit -m "feat(life-star): equation of state with pressure-weighted adiabat
 **Background for the implementer.** Do **not** implement these as temperature power laws. The T⁴, T¹⁷ and T⁴⁰ figures quoted in the design spec are *local logarithmic slopes* that explain why the burning shells come out the thickness they do; they are not the formulae. `Math.pow(T/1e8, 40)` overflows to `Infinity` or flushes to zero on tiny drifts in T. Use the Gamow-peak forms, which are better conditioned and valid over a far wider range (T6 = T/10⁶, T8 = T/10⁸):
 
 ```
-eps_pp  = 2.4e4  * rho     * X*X     * T6^(-2/3) * exp(-33.80  * T6^(-1/3))
-eps_CNO = 4.4e25 * rho     * X * Z   * T6^(-2/3) * exp(-152.28 * T6^(-1/3))
-eps_3a  = 5.1e8  * rho*rho * Y*Y*Y   * T8^(-3)   * exp(-44.027 / T8)
+eps_pp  = 2.41e6  * rho     * X*X   * T6^(-2/3) * exp(-33.80  * T6^(-1/3))
+eps_CNO = 8.67e27 * rho     * X * Z * T6^(-2/3) * exp(-152.28 * T6^(-1/3))
+eps_3a  = 5.09e8  * rho*rho * Y*Y*Y * T8^(-3)   * exp(-44.027 / T8)
 ```
+
+**The coefficients are cgs, converted from the W/kg figures textbooks quote.**
+`erg/g/s = 1e4 * W/kg` and `rho_SI = 1e3 * rho_cgs`, so a published SI
+coefficient multiplies by `1e7` to become the cgs one used here. Carroll &
+Ostlie give 0.241, 8.67e20 and 50.9 W/kg respectively. Getting this conversion
+wrong is silent: the structure solver simply shrinks the star until the
+suppressed rate matches the required luminosity, and every test still passes
+with a radius that is merely wrong.
+
+`eps_CNO` uses total metallicity `Z` where the published formula uses the CNO
+mass fraction `X_CNO`, which is roughly `Z/2` for a solar mix — an overestimate
+of about a factor of two that `CAL.cno` absorbs.
 
 **Leave the calibration multipliers in place.** Published rate coefficients omit electron screening and are fitted over limited temperature ranges; a toy that composes them with an approximate structure model will not land on the solar luminosity by itself. `CAL.pp`, `CAL.cno` and `CAL.he` default to 1.0 and are tuned once in Task 5's integration test so that a 1 M☉ star gives roughly the solar luminosity and a roughly 10 Gyr lifetime. Recording the tuned values in a comment is part of that task.
 
@@ -577,7 +592,7 @@ Add inside the factory, before the `return`:
   function epsPP(rho, T, X) {
     if (T <= 0 || X <= 0) return 0;
     const T6 = T / 1e6;
-    return CAL.pp * 2.4e4 * rho * X * X *
+    return CAL.pp * 2.41e6 * rho * X * X *
       Math.pow(T6, -2 / 3) * Math.exp(-33.80 * Math.pow(T6, -1 / 3));
   }
 
@@ -585,7 +600,7 @@ Add inside the factory, before the `return`:
   function epsCNO(rho, T, X, Z) {
     if (T <= 0 || X <= 0 || Z <= 0) return 0;
     const T6 = T / 1e6;
-    return CAL.cno * 4.4e25 * rho * X * Z *
+    return CAL.cno * 8.67e27 * rho * X * Z *
       Math.pow(T6, -2 / 3) * Math.exp(-152.28 * Math.pow(T6, -1 / 3));
   }
 
@@ -593,7 +608,7 @@ Add inside the factory, before the `return`:
   function eps3a(rho, T, Y) {
     if (T <= 0 || Y <= 0) return 0;
     const T8 = T / 1e8;
-    return CAL.he * 5.1e8 * rho * rho * Y * Y * Y *
+    return CAL.he * 5.09e8 * rho * rho * Y * Y * Y *
       Math.pow(T8, -3) * Math.exp(-44.027 / T8);
   }
 
