@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Eigencube — The Rubik's Cube as Linear Algebra</title>
 <style>
   /* tell Chrome the page is already dark, or auto-dark rewrites the whole palette */
@@ -13,8 +14,16 @@
   .lede { margin:0 0 20px; color:var(--mute); max-width:80ch; }
   .lede code, .panel code { color:var(--fg); }
   .stage { display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap; }
-  #view { width:560px; height:560px; max-width:100%; background:#0d1016; border:1px solid var(--line);
-          border-radius:8px; flex:none; }
+  .viewcol { width:560px; max-width:100%; flex:none; }
+  /* height:auto keeps the canvas square when max-width shrinks it on a narrow screen */
+  #view { display:block; width:100%; height:auto; background:#0d1016; border:1px solid var(--line);
+          border-radius:8px; }
+  /* Turn pad: one square per quarter turn, tinted with the face's centre colour, for touch screens. */
+  #turnpad { display:grid; grid-template-columns:repeat(6, 1fr); gap:8px; max-width:420px; margin:10px auto 0; }
+  #turnpad button { aspect-ratio:1; padding:0; border:none; border-radius:8px;
+                    color:#0a0c10; font:700 18px system-ui,sans-serif; }
+  #turnpad button:disabled { opacity:.35; }
+  button { touch-action:manipulation; } /* no double-tap zoom delay on the buttons */
   .panel { flex:1; min-width:280px; background:var(--card); border:1px solid var(--line);
            border-radius:9px; padding:14px 16px; }
   .panel h2 { margin:14px 0 6px; font-size:13px; font-weight:600; color:var(--mute);
@@ -62,7 +71,10 @@
   from those matrices. Click a cubelet to see its own.</p>
 
   <div class="stage">
-    <canvas id="view" width="560" height="560"></canvas>
+    <div class="viewcol">
+      <canvas id="view" width="560" height="560"></canvas>
+      <div id="turnpad"></div>
+    </div>
     <div class="panel">
       <h2>State</h2>
       <div id="status">Solved</div>
@@ -90,7 +102,8 @@
         <span><kbd>Enter</kbd></span><span>solve from here</span>
         <span><kbd>Esc</kbd></span><span>cancel the solver</span>
         <span><kbd>←</kbd><kbd>→</kbd></span><span>step through the solution (hold to run)</span>
-        <span>mouse</span><span>drag to orbit, wheel to zoom, click a cubelet to inspect</span>
+        <span>pad</span><span>the coloured squares under the cube turn faces too (touch screens)</span>
+        <span>mouse / touch</span><span>drag to orbit, wheel or pinch to zoom, click or tap a cubelet to inspect</span>
       </div>
 
       <h2>Cubelet</h2>
@@ -290,6 +303,7 @@ const PHASES = ['', 'top layer', 'middle layer', 'bottom cross', 'bottom corners
 function startSolve() {
   if (mode === 'solving' || turning || queue.length || isSolved(cube)) return;
   mode = 'solving';
+  refresh(); // disables the turn pad and hides playback
   const t0 = performance.now();
   let last = { phase: 1, step: 0, moves: 0, restarts: 0 };
   const show = () => setStatus('Solving…', true,
@@ -334,6 +348,7 @@ function refresh() {
     setStatus(`Solution: ${solution.length} moves`, false, `${summary}<br>move ${step} / ${solution.length} · ${at}`);
   }
   document.getElementById('playback').hidden = mode !== 'playback';
+  for (const b of turnPad) b.disabled = mode === 'solving';
   document.getElementById('play').textContent = playing ? 'Pause' : 'Play';
   inspect(selected);
 }
@@ -400,14 +415,28 @@ function togglePlay() {
   playing = !playing;
   refresh();
 }
+// A hand turn: leaves playback (the solution no longer applies) and queues behind any turn in flight.
+function turn(name) {
+  if (mode === 'solving') return;
+  mode = 'manual';
+  enqueue(moveByName[name]);
+}
+// Clockwise row first, then the primes, so the 6-column grid puts U over U′.
+const turnPad = [...moves.filter((m) => !m.name.endsWith("'")), ...moves.filter((m) => m.name.endsWith("'"))]
+  .map((m) => {
+    const b = document.createElement('button');
+    b.textContent = m.name.replace("'", '′');
+    b.title = `${m.name} — ${m.name.endsWith("'") ? 'counter-clockwise' : 'clockwise'}, seen facing that face`;
+    b.style.background = '#' + COLORS[m.v.join()].toString(16).padStart(6, '0');
+    b.onclick = () => turn(m.name);
+    document.getElementById('turnpad').append(b);
+    return b;
+  });
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || help.open) return;
   const face = /^Key([UDFBLR])$/.exec(e.code);
-  if (face && !e.ctrlKey && !e.metaKey && !e.altKey) {
-    if (mode === 'solving') return;
-    mode = 'manual';
-    enqueue(moveByName[face[1] + (e.shiftKey ? "'" : '')]);
-  } else if (e.code === 'Space') { e.preventDefault(); mode === 'playback' ? togglePlay() : scramble(); }
+  if (face && !e.ctrlKey && !e.metaKey && !e.altKey) turn(face[1] + (e.shiftKey ? "'" : ''));
+  else if (e.code === 'Space') { e.preventDefault(); mode === 'playback' ? togglePlay() : scramble(); }
   else if (e.code === 'Enter') { e.preventDefault(); startSolve(); } // not also a click on the focused button
   else if (e.code === 'Escape') cancelSolve();
   else if (e.code === 'ArrowRight') stepPlayback(1, e.repeat);
