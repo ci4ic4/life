@@ -27,14 +27,27 @@
   kbd { display:inline-block; min-width:22px; padding:1px 5px; border:1px solid var(--edge);
         border-bottom-width:2px; border-radius:4px; background:#0e1218; font:12px ui-monospace,monospace;
         text-align:center; }
-  .row { display:flex; gap:8px; align-items:center; margin-top:10px; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:10px; }
+  .row label { white-space:nowrap; }
   button { padding:6px 12px; border-radius:6px; border:1px solid var(--edge); background:#1d2430;
-           color:var(--fg); cursor:pointer; }
+           color:var(--fg); cursor:pointer; white-space:nowrap; }
   button:hover { border-color:var(--blue); }
   input[type=number] { width:90px; padding:5px; background:#0e1218; color:var(--fg);
                        border:1px solid var(--edge); border-radius:5px; }
   #inspector { font:12px/1.5 ui-monospace,monospace; white-space:pre; color:var(--fg); }
   #inspector .hint { font-family:system-ui,sans-serif; color:var(--mute); white-space:normal; }
+  dialog.info { max-width:640px; max-height:85vh; overflow-y:auto; background:var(--card); color:#b8c2d0;
+                border:1px solid var(--edge); border-radius:9px; padding:18px 22px; line-height:1.5; }
+  dialog.info::backdrop { background:#000a; }
+  dialog.info h2 { margin:0 0 6px; font-size:16px; color:var(--fg); }
+  dialog.info h3 { margin:16px 0 4px; font-size:11px; color:var(--amber); letter-spacing:.5px; text-transform:uppercase; }
+  dialog.info b, dialog.info code { color:var(--fg); }
+  dialog.info a { color:var(--blue); }
+  dialog.info table { border-collapse:collapse; width:100%; margin:4px 0; }
+  dialog.info td { padding:3px 8px 3px 0; border-bottom:1px solid var(--line); vertical-align:top; }
+  dialog.info td:first-child { color:var(--fg); white-space:nowrap; }
+  dialog.info .formula { margin:6px 0; padding:6px 10px; background:#0e1218; border-radius:6px;
+                         font:13px ui-monospace,monospace; color:var(--fg); }
 </style>
 
 <div class="wrap">
@@ -56,6 +69,7 @@
         <button id="scramble">Scramble</button>
         <button id="solve">Solve</button>
         <label>seed <input id="seed" type="number" value="1"></label>
+        <button id="helpBtn">How it works</button>
       </div>
 
       <h2>Keys</h2>
@@ -75,6 +89,65 @@
     </div>
   </div>
 </div>
+
+<dialog id="help" class="info">
+  <h2>How it works — the cube as linear algebra</h2>
+  <p>Most solvers track 54 stickers in flat arrays and permutation tables.
+  <a href="https://github.com/smolkaj/eigencube">Eigencube</a> places the cube in 3D space
+  with its centre at the origin (x = front, y = right, z = top) and lets vectors and rotation
+  matrices do the bookkeeping.</p>
+
+  <h3>The model at a glance</h3>
+  <table>
+    <tr><td>cubelet</td><td>its home vector <code>c ∈ {-1,0,1}³</code>, seen from the fixed core; 26 of them</td></tr>
+    <tr><td>type</td><td><code>‖c‖₁ = |x|+|y|+|z|</code> = number of stickers: centre 1, edge 2, corner 3</td></tr>
+    <tr><td>colours</td><td>the six unit vectors <code>±e</code>: a sticker's colour is the direction it faces when solved</td></tr>
+    <tr><td>stickers</td><td>the non-zero columns of <code>diag(c)</code></td></tr>
+    <tr><td>state</td><td>one rotation matrix <code>R</code> per cubelet, <code>I</code> when solved</td></tr>
+    <tr><td>position</td><td><code>p = R·c</code></td></tr>
+    <tr><td>sticker directions</td><td>the columns of <code>R·diag(c)</code></td></tr>
+    <tr><td>move</td><td>every cubelet with <code>v·(R·c) &gt; 0</code> turns: <code>R ← M·R</code> (<code>v</code> the face's axis)</td></tr>
+    <tr><td>solved</td><td><code>R·diag(c) = diag(c)</code> for every cubelet</td></tr>
+  </table>
+
+  <h3>Why "eigen"</h3>
+  <p>A turn about the axis <code>v</code> leaves <code>v</code> where it is: <code>M·v = v</code>, so
+  <code>v</code> is an eigenvector of <code>M</code> with eigenvalue 1. The centre cubelet on that
+  face is exactly <code>c = v</code>, so it never moves and its sticker keeps facing <code>v</code>.
+  That is why the six centres can serve as the colours.</p>
+
+  <h3>One formula for every rotation</h3>
+  <div class="formula">M(v, θ) = I + sin θ·[v]ₓ + (1 − cos θ)·[v]ₓ²</div>
+  <p>This is Rodrigues' rotation formula; <code>[v]ₓ</code> is the cross-product matrix of
+  <code>v</code>. At <code>θ = −90°</code> it is the clockwise quarter turn as seen from the face,
+  an integer matrix. At the angles in between it is the animation frame, so the slice you see
+  turning is <code>M(v, θ)·R</code>, frame by frame. Every reachable <code>R</code> is one of the
+  24 rotations of a cube: each column is some <code>±e</code> and <code>det R = 1</code>.</p>
+  <p>Deriving every turn from <code>v</code> and <code>θ</code> also corrects a slip in the Python
+  original. Its quarter turn ignores the sign of <code>v</code>, so each face shares its opposite
+  face's matrix, and its "clockwise" right, bottom and back turns are really R′, D′ and B′.</p>
+
+  <h3>Where the algebra stops and the search starts</h3>
+  <p>The algebra replaces the bookkeeping, not the search. Solving is five rounds of A*, each
+  aiming at a goal stated in matrices:</p>
+  <ol>
+    <li><b>top layer</b>, one more solved cubelet per search;</li>
+    <li><b>middle layer</b>, the same, up to 17 cubelets;</li>
+    <li><b>bottom cross</b>: first the edges' yellow faces down (<code>R·(0,0,−1) = (0,0,−1)</code>), then solved;</li>
+    <li><b>bottom corners</b> into place (<code>R·c = c</code>, twist ignored);</li>
+    <li><b>corner twists</b> with the fixed sequence (L′ U′ L U)×2, turning D between corners.</li>
+  </ol>
+  <p>The A* distance estimate asks of each cubelet: how many quarter turns would bring it home if it
+  were alone? That is itself a tiny search over the 24 rotations, cached. The search keeps no pattern
+  tables, and when it stalls it restarts with a 1.5× move budget and freshly randomized weights.
+  Expect solutions of 100–160 moves, far from optimal.</p>
+
+  <h3>See it live</h3>
+  <p>Click any cubelet: the panel shows its <code>c</code>, its position <code>R·c</code>, its
+  <code>R</code>, and <code>R·diag(c)</code>. Turn a face and watch those matrices change, and
+  only for the cubelets with <code>v·(R·c) &gt; 0</code>.</p>
+  <p style="text-align:right; margin-bottom:0"><button id="helpClose">Close</button></p>
+</dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -290,7 +363,7 @@ function stepPlayback(dir, fast) {
   refresh();
 }
 document.addEventListener('keydown', (e) => {
-  if (e.target.tagName === 'INPUT') return;
+  if (e.target.tagName === 'INPUT' || help.open) return;
   const face = /^Key([UDFBLR])$/.exec(e.code);
   if (face && !e.ctrlKey && !e.metaKey && !e.altKey) {
     if (mode === 'solving') return;
@@ -304,6 +377,10 @@ document.addEventListener('keydown', (e) => {
 });
 document.getElementById('scramble').onclick = scramble;
 document.getElementById('solve').onclick = startSolve;
+const help = document.getElementById('help');
+document.getElementById('helpBtn').onclick = () => help.showModal();
+document.getElementById('helpClose').onclick = () => help.close();
+help.addEventListener('click', (e) => { if (e.target === help) help.close(); });
 
 refresh();
 requestAnimationFrame(frame);
