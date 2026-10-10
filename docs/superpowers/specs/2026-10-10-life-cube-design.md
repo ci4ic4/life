@@ -41,10 +41,10 @@ just shows moves simulated, elapsed time and restarts.
 ## The move-matrix convention (a fix, not a copy)
 
 `eigencube.py`'s `rotation_matrix` ignores the sign of `v` and builds the quarter turn from
-the index order of the two rotating axes. As a result "direction +1" means standard clockwise
-for top (U) and front (F) but counterclockwise for right (R′), and the bottom/left/back faces
-reuse their opposite face's matrix. The solver doesn't care (it uses both directions), but
-`describe_move`'s "clockwise" is wrong for four of six faces.
+the index order of the two rotating axes, so each face shares its opposite face's matrix.
+As a result "direction +1" is U, F and L as labelled, but R′, D′ and B′ for right, bottom
+and back. The solver doesn't care (it uses both directions), but `describe_move`'s
+"clockwise" is wrong for three of six faces.
 
 The JS core derives every rotation from the axis–angle (Rodrigues) formula:
 
@@ -69,7 +69,8 @@ module body is a single factory function, so the page can ship it into a Worker 
 
 Target: under 400 lines, mirroring eigencube's own budget.
 
-- `vectors`, `unitVectors`, `solvedCube` — 26 cubelets `{c, R}`, `R` a 3×3 integer array.
+- `cubelets` (26 home vectors `c`), `unitVectors`, `solvedCube` — a cube is an array of 26
+  interned 3×3 integer matrices `R`, parallel to `cubelets` (so `c` is stored once).
 - `moves` — 12 named moves `{name, v, theta}` (`U`, `U'`, …).
 - `rotation(v, theta)` — Rodrigues; `quarter(v, sign)` the rounded integer case.
 - `applyMove(move, cube)`, `isCubeletSolved`, `isSolved`, `key(cube)` (string state key for
