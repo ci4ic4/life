@@ -6,11 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A suite of **browser simulations**, each a self-contained single HTML file — no build step, no bundler, no server. Open one directly (`file://`) and it runs. `index.html` is the landing page that links them.
 
-Three families, and the distinction matters when you pick a pattern to copy:
+Four families, and the distinction matters when you pick a pattern to copy:
 
 1. **Cellular automata on a torus** — `life-torus`, `life-stochastic`, `life-evolve`. Conway variants, Three.js + WebGL, GPU-accelerated.
 2. **Agent simulations** — `life-ecology` (predator/prey), `life-conveyor` (factory assembly). Not CA. No B/S rules, no torus mesh in the conveyor's case.
 3. **A partial Rust rewrite** in `crates/` — all of family 1, plus `life-ecology` from family 2. `life-conveyor` has no port.
+4. **Not life at all** — `life-star` (stellar evolution), `life-cube` (eigencube: the Rubik's cube as rotation matrices). Pure core + page, no grid.
 
 The HTML files are siblings, not a component tree. They share *concepts* and deliberately copy code rather than importing it.
 
@@ -23,19 +24,21 @@ Newer simulations separate pure simulation math from the page:
 | `life-stats.js` | `life-stochastic.html` | `life-stats.test.js` |
 | `life-ecology-core.js` | `life-ecology.html` | `life-ecology-core.test.js` |
 | `life-conveyor-core.js` | `life-conveyor.html` | `life-conveyor-core.test.js` |
+| `life-star-core.js` | `life-star.html` | `life-star-core.test.js` |
+| `life-cube-core.js` | `life-cube.html` | `life-cube-core.test.js` |
 
 Cores are UMD-lite: they work as both a `<script src>` global and a Node `require()`. This is what makes the logic testable at all — the browser has no test runner here. **Any new simulation should follow this split.** `life-torus.html` and `life-evolve.html` predate it and keep their rules inline.
 
 ## Commands
 
 ```bash
-node --test                                   # all JS tests (103 currently)
+node --test                                   # all JS tests
 node --test --test-name-pattern "classify"    # one test by name
 cargo build --workspace                       # the Rust port
 cargo test -p life-core
 ```
 
-**Gotcha: CI runs Rust only.** `.github/workflows/ci.yml` runs `cargo build --workspace` and `cargo test -p life-core` on three OSes — there is **no Node step**, so all 103 JS tests are manual. Run `node --test` yourself before committing anything touching a `*-core.js`; nothing else will.
+**Gotcha: CI runs Rust only.** `.github/workflows/ci.yml` runs `cargo build --workspace` and `cargo test -p life-core` on three OSes — there is **no Node step**, so all JS tests are manual. Run `node --test` yourself before committing anything touching a `*-core.js`; nothing else will.
 
 The one exception is `life-ecology-core.js`: change its mechanics and `cargo test -p life-core` fails, because `tests/ecology_parity.rs` holds counts generated from it. That failure is correct — it means the Rust port needs the same change and its expected rows regenerating, not that the test is stale.
 
@@ -49,6 +52,8 @@ No `package.json`, no lint config. `node --test` auto-discovers `*.test.js`.
 - `life-evolve.html` — heritable per-cell genes under spatial selection (see below).
 - `life-ecology.html` + `-core.js` — squirrels and pine martens on a torus of trees. Contact-process prey growth + conserved WaTor-style predation. CPU only.
 - `life-conveyor.html` + `-core.js` — workers assembling products from parts on parallel belts. Ported from a Python interview assignment (`~/source/cl01`). 2D canvas, no Three.js, no CDN dependency.
+- `life-star.html` + `-core.js` — four stars (0.5–25 M☉) on one clock: Lane-Emden structure, pp and CNO burning, adaptive timesteps. 2D canvas cross-section plus HR track, no Three.js.
+- `life-cube.html` + `-core.js` — port of github.com/smolkaj/eigencube. 26 cubelets as interned 3×3 integer rotation matrices; Rodrigues `M(v,θ)` gives both the quarter turns and the animation frames. The solver runs in a Blob Worker built from `LifeCube.factory.toString()`, so it works from `file://`. Fixes eigencube.py's move labels (its "clockwise" R, D, B are R′, D′, B′). The test's parity fixture holds states scrambled by eigencube.py itself.
 - `life-gpu.js` — browser-only `LifeGPU.create(renderer, cfg)`: shared WebGL2 harness (ping-pong compute + colour pass into a render target, on-demand readback). Each sim supplies its own rule/colour fragment shaders and CPU↔texture packing callbacks. **Used by the three CA sims only** — ecology and conveyor are CPU. Each has a boot-time `gpuSelfTest()` asserting the GPU step matches the CPU reference exactly (evolve/torus directly; stochastic at the deterministic limit σ→0). GPU caps grids at 2048², CPU fallback at 300². `life-torus` reads back every generation because loop detection needs the exact state; the other two throttle.
 - `crates/` — the Rust workspace: `life-core` (pure math, dependency-free, RNG injected as a closure so it stays wasm-ready), `life-gpu` (wgpu compute), `life-render` (torus mesh, camera, picking), `life-app` (winit + egui). `life-core::ecology` is a port of `life-ecology-core.js`, which stays the reference; `tests/ecology_parity.rs` replays a seeded run against counts generated from the JS and is what keeps the two from drifting.
 - `deploy/` — nginx config and notes for the o2 host. Not served.
