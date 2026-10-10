@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Eigencube — The Rubik's Cube as Linear Algebra</title>
+<style>
+  /* tell Chrome the page is already dark, or auto-dark rewrites the whole palette */
+  :root { color-scheme: dark; }
+  :root { --bg:#0a0c10; --card:#151a22; --line:#2a3340; --edge:#36424f;
+          --fg:#cdd6e0; --mute:#8a96a6; --blue:#7fb0ff; --green:#7fd18c; --amber:#ffd479; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.4 system-ui,sans-serif; }
+  .wrap { max-width:1000px; margin:0 auto; padding:28px 20px 48px; }
+  h1 { margin:0 0 4px; font-size:22px; font-weight:600; letter-spacing:-.2px; }
+  .lede { margin:0 0 20px; color:var(--mute); max-width:80ch; }
+  .lede code, .panel code { color:var(--fg); }
+  .stage { display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap; }
+  #view { width:560px; height:560px; max-width:100%; background:#0d1016; border:1px solid var(--line);
+          border-radius:8px; flex:none; }
+  .panel { flex:1; min-width:280px; background:var(--card); border:1px solid var(--line);
+           border-radius:9px; padding:14px 16px; }
+  .panel h2 { margin:14px 0 6px; font-size:13px; font-weight:600; color:var(--mute);
+              text-transform:uppercase; letter-spacing:.5px; }
+  .panel h2:first-child { margin-top:0; }
+  #status { font-size:16px; font-weight:700; color:var(--green); }
+  #status.busy { color:var(--amber); }
+  #detail { color:var(--mute); margin-top:3px; min-height:2.8em; }
+  .keys { display:grid; grid-template-columns:auto 1fr; gap:3px 10px; }
+  kbd { display:inline-block; min-width:22px; padding:1px 5px; border:1px solid var(--edge);
+        border-bottom-width:2px; border-radius:4px; background:#0e1218; font:12px ui-monospace,monospace;
+        text-align:center; }
+  .row { display:flex; gap:8px; align-items:center; margin-top:10px; }
+  button { padding:6px 12px; border-radius:6px; border:1px solid var(--edge); background:#1d2430;
+           color:var(--fg); cursor:pointer; }
+  button:hover { border-color:var(--blue); }
+  input[type=number] { width:90px; padding:5px; background:#0e1218; color:var(--fg);
+                       border:1px solid var(--edge); border-radius:5px; }
+  #inspector { font:12px/1.5 ui-monospace,monospace; white-space:pre; color:var(--fg); }
+  #inspector .hint { font-family:system-ui,sans-serif; color:var(--mute); white-space:normal; }
+</style>
+
+<div class="wrap">
+  <h1>Eigencube — the Rubik's cube as linear algebra</h1>
+  <p class="lede">A port of <a href="https://github.com/smolkaj/eigencube">eigencube</a>. Each
+  cubelet is its home vector <code>c ∈ {-1,0,1}³</code> and a rotation matrix <code>R</code>:
+  it sits at <code>Rc</code>, its stickers face the columns of <code>R·diag(c)</code>, and it is
+  solved when <code>R·diag(c) = diag(c)</code>. A move on the face with axis <code>v</code> turns
+  every cubelet with <code>v·(Rc) &gt; 0</code>: <code>R ← M·R</code>. Every frame below is drawn
+  from those matrices. Click a cubelet to see its own.</p>
+
+  <div class="stage">
+    <canvas id="view" width="560" height="560"></canvas>
+    <div class="panel">
+      <h2>State</h2>
+      <div id="status">Solved</div>
+      <div id="detail"></div>
+      <div class="row">
+        <button id="scramble">Scramble</button>
+        <button id="solve">Solve</button>
+        <label>seed <input id="seed" type="number" value="1"></label>
+      </div>
+
+      <h2>Keys</h2>
+      <div class="keys">
+        <span><kbd>U</kbd><kbd>D</kbd><kbd>F</kbd><kbd>B</kbd><kbd>L</kbd><kbd>R</kbd></span>
+        <span>turn that face clockwise (as seen facing it)</span>
+        <span><kbd>Shift</kbd> + face</span><span>counter-clockwise (prime)</span>
+        <span><kbd>Space</kbd></span><span>scramble (25 moves from the seed)</span>
+        <span><kbd>Enter</kbd></span><span>solve from here</span>
+        <span><kbd>Esc</kbd></span><span>cancel the solver</span>
+        <span><kbd>←</kbd><kbd>→</kbd></span><span>step through the solution (hold to run)</span>
+        <span>mouse</span><span>drag to orbit, wheel to zoom, click a cubelet to inspect</span>
+      </div>
+
+      <h2>Cubelet</h2>
+      <div id="inspector"><span class="hint">Click a cubelet.</span></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="life-cube-core.js"></script>
+<script>
+const { cubelets, moves, moveByName, inverse, rotation, solvedCube, position, diag, matMul,
+        applyMove, applyMoves, isSolved, isCubeletSolved, shuffle, norm1 } = LifeCube;
+
+// ---- scene ------------------------------------------------------------------
+// Eigencube's frame is x front, y right, z top; three.js is y up, z toward the viewer.
+// P maps one to the other (a cyclic permutation, det +1): three = P · eigencube.
+const P = [[0, 1, 0], [0, 0, 1], [1, 0, 0]];
+const PT = [[0, 0, 1], [1, 0, 0], [0, 1, 0]];
+const canvas = document.getElementById('view');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(devicePixelRatio);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d1016);
+const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
+camera.position.set(4.6, 4.2, 6.4); // front (+z), up (+y), right (+x) in view
+const controls = new THREE.OrbitControls(camera, canvas);
+controls.enablePan = false;
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const sun = new THREE.DirectionalLight(0xffffff, 0.6);
+sun.position.set(3, 6, 5);
+scene.add(sun);
+
+// Sticker colour per eigencube axis direction, as in eigencube.py's color_names.
+const COLORS = { '1,0,0': 0x2ecc71, '0,1,0': 0xe74c3c, '0,0,1': 0xecf0f1,
+                 '-1,0,0': 0x3498db, '0,-1,0': 0xe67e22, '0,0,-1': 0xf1c40f };
+const THREE_AXIS = [2, 0, 1]; // eigencube axis k lands on three.js axis THREE_AXIS[k]
+const bodyMaterial = new THREE.MeshLambertMaterial({ color: 0x14171c });
+const highlightMaterial = new THREE.MeshLambertMaterial({ color: 0x3a4658 });
+const meshes = cubelets.map((c, i) => {
+  const group = new THREE.Group();
+  group.matrixAutoUpdate = false;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.96, 0.96, 0.96), bodyMaterial);
+  body.userData.index = i;
+  group.add(body);
+  for (let k = 0; k < 3; k++) {
+    if (!c[k]) continue;
+    const size = [0.82, 0.82, 0.82], at = [0, 0, 0], t = THREE_AXIS[k];
+    size[t] = 0.02; at[t] = c[k] * 0.485;
+    const dir = [0, 0, 0]; dir[k] = c[k];
+    const sticker = new THREE.Mesh(new THREE.BoxGeometry(...size),
+      new THREE.MeshLambertMaterial({ color: COLORS[dir.join()] }));
+    sticker.position.set(...at);
+    sticker.userData.index = i;
+    group.add(sticker);
+  }
+  scene.add(group);
+  return group;
+});
+
+// Place cubelet i with rotation A (eigencube frame): orientation P A Pᵀ at P A c.
+function place(i, A) {
+  const B = matMul(matMul(P, A), PT), p = position(cubelets[i], matMul(P, A));
+  meshes[i].matrix.set(B[0][0], B[0][1], B[0][2], p[0],
+                       B[1][0], B[1][1], B[1][2], p[1],
+                       B[2][0], B[2][1], B[2][2], p[2],
+                       0, 0, 0, 1);
+}
+
+// ---- state and animation ----------------------------------------------------
+let cube = solvedCube;
+let mode = 'manual';            // 'manual' | 'solving' | 'playback'
+let solution = [], step = 0, summary = '';
+const queue = [];               // pending {move, done}
+let turning = null;             // {move, slice, t0, ms}
+
+function enqueue(move, ms = 150, done = () => {}) { queue.push({ move, ms, done }); }
+function startNext(now) {
+  const next = queue.shift();
+  const slice = cube.map((R, i) => next.move.v.reduce((s, x, k) => s + x * position(cubelets[i], R)[k], 0) > 0);
+  turning = { ...next, slice, t0: now };
+}
+function frame(now) {
+  if (!turning && queue.length) startNext(now);
+  if (turning) {
+    const t = Math.min(1, (now - turning.t0) / turning.ms);
+    const eased = t * t * (3 - 2 * t);
+    const M = rotation(turning.move.v, turning.move.theta * eased);
+    cube.forEach((R, i) => place(i, turning.slice[i] ? matMul(M, R) : R));
+    if (t === 1) {
+      cube = applyMove(turning.move, cube);
+      const done = turning.done;
+      turning = null;
+      done();
+      refresh();
+    }
+  } else {
+    cube.forEach((R, i) => place(i, R));
+  }
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+
+// ---- solver in a Worker built from the core's own source --------------------
+// Blob workers run from file://, where new Worker('file.js') is refused.
+function workerMain() {
+  self.onmessage = (e) => {
+    const { matrices, seed } = e.data;
+    const t0 = performance.now(), m0 = LifeCube.movesSimulated();
+    const report = (type, extra) => self.postMessage({ type, ms: performance.now() - t0,
+      moves: LifeCube.movesSimulated() - m0, ...extra });
+    const solution = LifeCube.solve(LifeCube.cubeFromMatrices(matrices), {
+      rng: LifeCube.mulberry32(seed),
+      onProgress: (p) => report('progress', { phase: p.phase, step: p.step, restarts: p.restarts }),
+    });
+    report('done', { solution });
+  };
+}
+const workerSource = 'self.LifeCube = (' + LifeCube.factory.toString() + ')();\n'
+                   + '(' + workerMain.toString() + ')();';
+const workerUrl = URL.createObjectURL(new Blob([workerSource], { type: 'text/javascript' }));
+let worker = null, ticker = null;
+
+const PHASES = ['', 'top layer', 'middle layer', 'bottom cross', 'bottom corners', 'corner twists'];
+function startSolve() {
+  if (mode === 'solving' || turning || queue.length || isSolved(cube)) return;
+  mode = 'solving';
+  const t0 = performance.now();
+  let last = { phase: 1, step: 0, moves: 0, restarts: 0 };
+  const show = () => setStatus('Solving…', true,
+    `phase ${last.phase}/5 — ${PHASES[last.phase]}, step ${last.step}<br>` +
+    `${last.moves.toLocaleString()} moves simulated · ${((performance.now() - t0) / 1000).toFixed(1)} s` +
+    (last.restarts ? ` · ${last.restarts} restart${last.restarts > 1 ? 's' : ''}` : ''));
+  worker = new Worker(workerUrl);
+  worker.onmessage = (e) => {
+    last = e.data;
+    if (e.data.type === 'progress') return show();
+    clearInterval(ticker);
+    worker.terminate(); worker = null;
+    solution = e.data.solution; step = 0; mode = 'playback';
+    summary = `found in ${(e.data.ms / 1000).toFixed(1)} s, ${e.data.moves.toLocaleString()} moves simulated ` +
+      `(${Math.round(e.data.moves / (e.data.ms / 1000)).toLocaleString()}/s)`;
+    refresh();
+  };
+  worker.postMessage({ matrices: cube, seed: +document.getElementById('seed').value });
+  ticker = setInterval(show, 200);
+  show();
+}
+function cancelSolve() {
+  if (mode !== 'solving') return;
+  worker.terminate(); worker = null; clearInterval(ticker);
+  mode = 'manual';
+  refresh();
+}
+
+// ---- panel ------------------------------------------------------------------
+const statusEl = document.getElementById('status'), detailEl = document.getElementById('detail');
+function setStatus(text, busy, detail) {
+  statusEl.textContent = text; statusEl.classList.toggle('busy', busy);
+  detailEl.innerHTML = detail;
+}
+function refresh() {
+  if (mode === 'manual') {
+    setStatus(isSolved(cube) ? 'Solved' : 'Scrambled', false,
+      `${cube.filter((R, i) => isCubeletSolved(i, R)).length} / 26 cubelets home`);
+  } else if (mode === 'playback') {
+    const at = step < solution.length ? `next <b>${solution[step]}</b>` : 'done';
+    setStatus(`Solution: ${solution.length} moves`, false, `${summary}<br>move ${step} / ${solution.length} · ${at}`);
+  }
+  inspect(selected);
+}
+
+let selected = null;
+const fmt = (x) => (x < 0 ? '' : ' ') + x;
+const vec = (v) => '(' + v.map(fmt).join(' ') + ')';
+const mat = (M) => M.map((row) => '│' + row.map(fmt).join(' ') + ' │');
+function inspect(i) {
+  const el = document.getElementById('inspector');
+  meshes.forEach((g, j) => { g.children[0].material = j === i ? highlightMaterial : bodyMaterial; });
+  if (i === null) return;
+  const c = cubelets[i], R = cube[i], S = matMul(R, diag(c));
+  const type = ['', 'centre', 'edge', 'corner'][norm1(c)];
+  const rows = [0, 1, 2].map((r) => `${mat(R)[r]}   ${mat(S)[r]}`);
+  el.textContent =
+    `${type}, home c = ${vec(c)}\n` +
+    `now at Rc   = ${vec(position(c, R))}\n\n` +
+    `R             R·diag(c)\n${rows.join('\n')}\n\n` +
+    (isCubeletSolved(i, R) ? 'solved: R·diag(c) = diag(c)' : 'not solved: R·diag(c) ≠ diag(c)');
+}
+const raycaster = new THREE.Raycaster(), pointer = new THREE.Vector2();
+let downAt = null;
+canvas.addEventListener('pointerdown', (e) => { downAt = [e.clientX, e.clientY]; });
+canvas.addEventListener('pointerup', (e) => {
+  if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 4) return; // a drag, not a click
+  const r = canvas.getBoundingClientRect();
+  pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  raycaster.setFromCamera(pointer, camera);
+  const hit = raycaster.intersectObjects(meshes, true)[0];
+  selected = hit ? hit.object.userData.index : null;
+  inspect(selected);
+});
+
+// ---- input ------------------------------------------------------------------
+function scramble() {
+  if (mode === 'solving' || turning || queue.length) return;
+  const seedInput = document.getElementById('seed');
+  const seed = +seedInput.value;
+  cube = shuffle(solvedCube, 25, LifeCube.mulberry32(seed)).cube;
+  seedInput.value = seed + 1;
+  mode = 'manual';
+  refresh();
+}
+function stepPlayback(dir, fast) {
+  if (mode !== 'playback' || queue.length > 1) return;
+  const ms = fast ? 45 : 150;
+  if (dir > 0 && step < solution.length) enqueue(moveByName[solution[step++]], ms);
+  if (dir < 0 && step > 0) enqueue(inverse(moveByName[solution[--step]]), ms);
+  refresh();
+}
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT') return;
+  const face = /^Key([UDFBLR])$/.exec(e.code);
+  if (face && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (mode === 'solving') return;
+    mode = 'manual';
+    enqueue(moveByName[face[1] + (e.shiftKey ? "'" : '')]);
+  } else if (e.code === 'Space') { e.preventDefault(); scramble(); }
+  else if (e.code === 'Enter') startSolve();
+  else if (e.code === 'Escape') cancelSolve();
+  else if (e.code === 'ArrowRight') stepPlayback(1, e.repeat);
+  else if (e.code === 'ArrowLeft') stepPlayback(-1, e.repeat);
+});
+document.getElementById('scramble').onclick = scramble;
+document.getElementById('solve').onclick = startSolve;
+
+refresh();
+requestAnimationFrame(frame);
+</script>

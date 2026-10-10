@@ -104,6 +104,18 @@
     </a>
   </div>
 
+  <h2>Linear algebra</h2>
+  <div class="grid">
+    <a class="card" href="life-cube.html">
+      <div class="glyph">▣</div>
+      <h3>Eigencube</h3>
+      <p>A Rubik's cube where each cubelet is a home vector and a rotation matrix, drawn
+      frame by frame from those matrices. Turn it by keyboard, inspect any cubelet's
+      <code>R</code>, or hand it to a five-phase A* solver running in a Worker.</p>
+      <span class="tag">seeded · solver</span>
+    </a>
+  </div>
+
   <div class="note">
     <p><b>Reading them.</b> Every simulation has a <b>Help</b> button explaining the rules and
     what is worth watching. The ones marked GPU fall back to CPU automatically on smaller grids;
@@ -116,7 +128,8 @@
     tested, confidently wrong ideas that had to be torn out, and the finding that matters most:
     a predator with <i>no</i> preference still crashes the greys, and the reds die anyway.</p>
     <p><b>Under them.</b> The rules live in plain modules — <code>life-stats.js</code>,
-    <code>life-ecology-core.js</code>, <code>life-conveyor-core.js</code> — with no DOM, shared
+    <code>life-ecology-core.js</code>, <code>life-conveyor-core.js</code>,
+    <code>life-star-core.js</code>, <code>life-cube-core.js</code> — with no DOM, shared
     between the pages and Node's test runner. <code>node --test</code> runs the suite.</p>
   </div>
 
