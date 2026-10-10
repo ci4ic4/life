@@ -29,6 +29,8 @@
         text-align:center; }
   .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:10px; }
   .row label { white-space:nowrap; }
+  .row[hidden] { display:none; }
+  #playback button { min-width:40px; }
   button { padding:6px 12px; border-radius:6px; border:1px solid var(--edge); background:#1d2430;
            color:var(--fg); cursor:pointer; white-space:nowrap; }
   button:hover { border-color:var(--blue); }
@@ -71,13 +73,20 @@
         <label>seed <input id="seed" type="number" value="1"></label>
         <button id="helpBtn">How it works</button>
       </div>
+      <div class="row" id="playback" hidden>
+        <button id="first" title="back to the scramble">⏮</button>
+        <button id="back" title="step back (←)">◀</button>
+        <button id="play" title="play / pause (Space)">Pause</button>
+        <button id="forward" title="step forward (→)">▶</button>
+        <button id="last" title="jump to solved">⏭</button>
+      </div>
 
       <h2>Keys</h2>
       <div class="keys">
         <span><kbd>U</kbd><kbd>D</kbd><kbd>F</kbd><kbd>B</kbd><kbd>L</kbd><kbd>R</kbd></span>
         <span>turn that face clockwise (as seen facing it)</span>
         <span><kbd>Shift</kbd> + face</span><span>counter-clockwise (prime)</span>
-        <span><kbd>Space</kbd></span><span>scramble (25 moves from the seed)</span>
+        <span><kbd>Space</kbd></span><span>scramble (25 moves from the seed); during playback, play / pause</span>
         <span><kbd>Enter</kbd></span><span>solve from here</span>
         <span><kbd>Esc</kbd></span><span>cancel the solver</span>
         <span><kbd>←</kbd><kbd>→</kbd></span><span>step through the solution (hold to run)</span>
@@ -215,6 +224,7 @@ function place(i, A) {
 let cube = solvedCube;
 let mode = 'manual';            // 'manual' | 'solving' | 'playback'
 let solution = [], step = 0, summary = '';
+let solveStart = null, playing = false;  // the solution replays from solveStart
 const queue = [];               // pending {move, done}
 let turning = null;             // {move, slice, t0, ms}
 
@@ -224,7 +234,17 @@ function startNext(now) {
   const slice = cube.map((R, i) => next.move.v.reduce((s, x, k) => s + x * position(cubelets[i], R)[k], 0) > 0);
   turning = { ...next, slice, t0: now };
 }
+// Abandon queued and in-flight turns. Safe: a turn only changes `cube` when it completes.
+function stopAnimation() { playing = false; turning = null; queue.length = 0; }
+const PLAY_MS = 160;
+function autoPlay() {
+  if (!playing || turning || queue.length) return;
+  if (mode !== 'playback' || step === solution.length) { playing = false; refresh(); return; }
+  enqueue(moveByName[solution[step++]], PLAY_MS);
+  refresh();
+}
 function frame(now) {
+  autoPlay();
   if (!turning && queue.length) startNext(now);
   if (turning) {
     const t = Math.min(1, (now - turning.t0) / turning.ms);
@@ -283,6 +303,7 @@ function startSolve() {
     clearInterval(ticker);
     worker.terminate(); worker = null;
     solution = e.data.solution; step = 0; mode = 'playback';
+    solveStart = cube; playing = true;  // show the solve, don't just report it
     summary = `found in ${(e.data.ms / 1000).toFixed(1)} s, ${e.data.moves.toLocaleString()} moves simulated ` +
       `(${Math.round(e.data.moves / (e.data.ms / 1000)).toLocaleString()}/s)`;
     refresh();
@@ -312,6 +333,8 @@ function refresh() {
     const at = step < solution.length ? `next <b>${solution[step]}</b>` : 'done';
     setStatus(`Solution: ${solution.length} moves`, false, `${summary}<br>move ${step} / ${solution.length} · ${at}`);
   }
+  document.getElementById('playback').hidden = mode !== 'playback';
+  document.getElementById('play').textContent = playing ? 'Pause' : 'Play';
   inspect(selected);
 }
 
@@ -347,7 +370,8 @@ canvas.addEventListener('pointerup', (e) => {
 
 // ---- input ------------------------------------------------------------------
 function scramble() {
-  if (mode === 'solving' || turning || queue.length) return;
+  if (mode === 'solving') return;
+  stopAnimation();
   const seedInput = document.getElementById('seed');
   const seed = +seedInput.value;
   cube = shuffle(solvedCube, 25, LifeCube.mulberry32(seed)).cube;
@@ -357,9 +381,23 @@ function scramble() {
 }
 function stepPlayback(dir, fast) {
   if (mode !== 'playback' || queue.length > 1) return;
+  playing = false;
   const ms = fast ? 45 : 150;
   if (dir > 0 && step < solution.length) enqueue(moveByName[solution[step++]], ms);
   if (dir < 0 && step > 0) enqueue(inverse(moveByName[solution[--step]]), ms);
+  refresh();
+}
+function jumpTo(k) {
+  if (mode !== 'playback') return;
+  stopAnimation();
+  cube = applyMoves(solution.slice(0, k), solveStart);
+  step = k;
+  refresh();
+}
+function togglePlay() {
+  if (mode !== 'playback') return;
+  if (step === solution.length) jumpTo(0);
+  playing = !playing;
   refresh();
 }
 document.addEventListener('keydown', (e) => {
@@ -369,14 +407,19 @@ document.addEventListener('keydown', (e) => {
     if (mode === 'solving') return;
     mode = 'manual';
     enqueue(moveByName[face[1] + (e.shiftKey ? "'" : '')]);
-  } else if (e.code === 'Space') { e.preventDefault(); scramble(); }
-  else if (e.code === 'Enter') startSolve();
+  } else if (e.code === 'Space') { e.preventDefault(); mode === 'playback' ? togglePlay() : scramble(); }
+  else if (e.code === 'Enter') { e.preventDefault(); startSolve(); } // not also a click on the focused button
   else if (e.code === 'Escape') cancelSolve();
   else if (e.code === 'ArrowRight') stepPlayback(1, e.repeat);
   else if (e.code === 'ArrowLeft') stepPlayback(-1, e.repeat);
 });
 document.getElementById('scramble').onclick = scramble;
 document.getElementById('solve').onclick = startSolve;
+document.getElementById('first').onclick = () => jumpTo(0);
+document.getElementById('back').onclick = () => stepPlayback(-1, false);
+document.getElementById('play').onclick = togglePlay;
+document.getElementById('forward').onclick = () => stepPlayback(1, false);
+document.getElementById('last').onclick = () => jumpTo(solution.length);
 const help = document.getElementById('help');
 document.getElementById('helpBtn').onclick = () => help.showModal();
 document.getElementById('helpClose').onclick = () => help.close();
