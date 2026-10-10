@@ -222,7 +222,6 @@ function cancelSolve() {
   if (mode !== 'solving') return;
   worker.terminate(); worker = null; clearInterval(ticker);
   mode = 'manual';
-  setStatus('Cancelled', false, '');
   refresh();
 }
 
